@@ -89,16 +89,45 @@ Revocation is "forward-only": once a viewer has a key, you can’t take it back,
 
 ## Quickstart (VPS, HTTPS)
 
-### DNS
-Point to your VPS IP:
+### 1) Choose domains
+Pick 3 hostnames (subdomains) you control and point them at your VPS IP:
 
-- `demo.tomdwyer.uk`
-- `blossom.tomdwyer.uk`
-- `relay.tomdwyer.uk`
+- `DEMO_HOST` (serves the web UI) — e.g. `demo.example.com`
+- `BLOSSOM_HOST` (serves encrypted blobs) — e.g. `blossom.example.com`
+- `RELAY_HOST` (serves a Nostr relay over WSS) — e.g. `relay.example.com`
 
-Ensure **only one A record** per name (avoid old host IPs).
+### 2) DNS
+Create **A records** for each hostname to your VPS public IP.
 
-### Run
+Important:
+- Ensure **only one A record** per name (don’t leave old host IPs around).
+- Lower TTL (e.g. 60–300s) while iterating.
+
+### 3) Configure Caddy
+Edit `Caddyfile` and replace the hostnames with your chosen ones:
+
+```caddy
+DEMO_HOST {
+  root * /srv/web
+  file_server
+}
+
+BLOSSOM_HOST {
+  reverse_proxy blossom:3000
+}
+
+RELAY_HOST {
+  reverse_proxy relay:8080
+}
+```
+
+### 4) Configure the web app
+Edit `web/config.js`:
+
+- `RELAYS = ["wss://RELAY_HOST"]`
+- `BLOB_BASE = "https://BLOSSOM_HOST"`
+
+### 5) Run
 On the VPS:
 
 ```bash
@@ -111,9 +140,13 @@ sudo docker compose -f docker-compose.prod.yml ps
 
 Then open:
 
-- `https://demo.tomdwyer.uk/admin.html?stream=demo1`
-- `https://demo.tomdwyer.uk/broadcast.html?stream=demo1`
-- `https://demo.tomdwyer.uk/view.html?stream=demo1`
+- `https://DEMO_HOST/admin.html?stream=demo1`
+- `https://DEMO_HOST/broadcast.html?stream=demo1`
+- `https://DEMO_HOST/view.html?stream=demo1`
+
+Video pages:
+- `https://DEMO_HOST/broadcast-video.html?stream=demo1`
+- `https://DEMO_HOST/view-video.html?stream=demo1`
 
 **Note:** camera + WebCrypto generally require HTTPS (secure context).
 
