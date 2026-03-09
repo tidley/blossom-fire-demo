@@ -37,7 +37,7 @@
     </div>
 
     <script type="module">
-      import { TAG_DEMO, TAG_ADMINKEY, ADMIN_SK_HEX } from './config.js';
+      import { TAG_DEMO_VIDEO, TAG_ADMINKEY, ADMIN_SK_HEX } from './config.js';
       import { blobUpload } from './blob.js';
       import { aesGcmEncrypt, randKey32, utf8Bytes, b64encode, sha256Bytes } from './crypto.js';
       import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, nip44Encrypt, skFromHex, pubkeyFromSk } from './util.js';
@@ -105,7 +105,7 @@
           const ann = makeSignedEventUnsigned(1, broadcaster.sk, {
             content: '',
             tags: [
-              ['t', TAG_DEMO],
+              ['t', TAG_DEMO_VIDEO],
               ['d', streamId],
               ['i', String(chunkId)],
               ['x', hash],

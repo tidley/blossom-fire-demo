@@ -24,7 +24,7 @@
     <video id="v" controls autoplay playsinline muted></video>
 
     <script type="module">
-      import { TAG_REQ, TAG_DEMO } from './config.js';
+      import { TAG_REQ, TAG_DEMO_VIDEO } from './config.js';
       import { blobFetch } from './blob.js';
       import { aesGcmDecrypt, b64decode, utf8Bytes, sha256Bytes } from './crypto.js';
       import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, sub, nip44Decrypt } from './util.js';
@@ -128,7 +128,7 @@
 
       // Subscribe to announcements
       sub([
-        { kinds: [1], '#t': [TAG_DEMO], limit: 200 }
+        { kinds: [1], '#t': [TAG_DEMO_VIDEO], limit: 500 }
       ], async (ev) => {
         try {
           const dTag = ev.tags.find(t => t[0]==='d');
