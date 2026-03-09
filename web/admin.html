@@ -165,11 +165,11 @@
           const frameId = Number(msg.frameId);
           const blobHash = msg.x;
           const keyBytes = b64decode(msg.k);
-          const mime = msg.m || 'image/webp';
+          const mime = msg.m || 'application/octet-stream';
 
           adminFrameKeys.set(frameId, { keyBytes, blobHash, mime });
 
-          // Live preview
+          // Live preview (best-effort; only for images)
           await tryRenderPreview(frameId);
 
           // Forward key to allowed viewers
