@@ -1,0 +1,11 @@
+{
+  "name": "blossom-fire-demo",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "nostr-tools": "^2.10.2"
+  },
+  "scripts": {
+    "test:e2e": "node tests/e2e.mjs"
+  }
+}
