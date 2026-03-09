@@ -29,8 +29,14 @@
           <div>Status: <span id="status">connecting…</span></div>
         </div>
         <div style="margin-top:10px;">
-          <div class="small">Live preview (decrypting like a viewer, using admin-delivered keys)</div>
+          <div class="row">
+            <div class="small">Live preview (decrypting like a viewer, using admin-delivered keys)</div>
+            <label class="small" style="margin-left:auto; display:flex; align-items:center; gap:8px;">
+              <input id="previewVideo" type="checkbox" /> Preview video
+            </label>
+          </div>
           <img id="preview" />
+          <video id="previewVid" controls autoplay playsinline muted style="display:none; width:100%; max-width:720px; margin-top:12px;"></video>
         </div>
       </div>
 
@@ -70,12 +76,22 @@
       const statusEl = document.querySelector('#status');
       const viewersEl = document.querySelector('#viewers');
       const previewEl = document.querySelector('#preview');
+      const previewVideoToggle = document.querySelector('#previewVideo');
+      const previewVidEl = document.querySelector('#previewVid');
 
       // viewerPubkeyHex -> { allowed, lastSeen, npub }
       const viewers = new Map();
 
-      // frameId -> { keyBytes, blobHash, mime }
+      // frameId -> { keyBytes, blobHash, mime, codec }
       const adminFrameKeys = new Map();
+
+      // Video preview (MSE) state
+      const videoKeys = new Map();      // chunkId -> { keyBytes, blobHash, mime, codec }
+      const videoDecrypted = new Map(); // chunkId -> Uint8Array
+      let videoLastAppended = -1;
+      let mediaSource = null;
+      let sourceBuffer = null;
+      let videoCodec = null;
 
       function setStatus(s) { statusEl.textContent = s; }
 
@@ -166,10 +182,21 @@
           const blobHash = msg.x;
           const keyBytes = b64decode(msg.k);
           const mime = msg.m || 'application/octet-stream';
+          const codec = msg.c || mime;
 
-          adminFrameKeys.set(frameId, { keyBytes, blobHash, mime });
+          adminFrameKeys.set(frameId, { keyBytes, blobHash, mime, codec });
 
-          // Live preview (best-effort; only for images)
+          // If it's video and preview is enabled, decrypt+append via MSE
+          if (mime.startsWith('video/')) {
+            videoKeys.set(frameId, { keyBytes, blobHash, mime, codec });
+            if (previewVideoToggle.checked) {
+              // ensure MSE starts with the right codec
+              ensureVideoMse(codec);
+              await tryDecryptVideoChunk(frameId);
+            }
+          }
+
+          // Image preview (best-effort)
           await tryRenderPreview(frameId);
 
           // Forward key to allowed viewers
@@ -191,27 +218,128 @@
         }
       });
 
-      async function tryRenderPreview(frameId) {
-        const rec = adminFrameKeys.get(frameId);
+      function resetVideoPreview() {
+        // Drop MSE pipeline so we can recreate cleanly
+        mediaSource = null;
+        sourceBuffer = null;
+        videoCodec = null;
+        videoDecrypted.clear();
+        videoKeys.clear();
+        videoLastAppended = -1;
+        try { previewVidEl.pause(); } catch {}
+        previewVidEl.removeAttribute('src');
+        previewVidEl.load();
+      }
+
+      function ensureVideoMse(codec) {
+        if (mediaSource) return;
+        if (!('MediaSource' in window)) {
+          setStatus('error: MediaSource not supported in this browser');
+          return;
+        }
+        videoCodec = codec || 'video/webm;codecs=vp8,opus';
+        if (!MediaSource.isTypeSupported(videoCodec)) {
+          setStatus(`error: codec not supported: ${videoCodec}`);
+          return;
+        }
+
+        mediaSource = new MediaSource();
+        previewVidEl.src = URL.createObjectURL(mediaSource);
+        mediaSource.addEventListener('sourceopen', () => {
+          try {
+            sourceBuffer = mediaSource.addSourceBuffer(videoCodec);
+            sourceBuffer.mode = 'sequence';
+            sourceBuffer.addEventListener('updateend', pumpVideo);
+            sourceBuffer.addEventListener('error', (e) => {
+              console.error('admin sourceBuffer error', e);
+              setStatus('admin video sourceBuffer error (see console)');
+            });
+            pumpVideo();
+          } catch (e) {
+            console.error(e);
+            setStatus(`admin: error creating SourceBuffer: ${e.message || e}`);
+          }
+        }, { once: true });
+      }
+
+      function pumpVideo() {
+        if (!previewVideoToggle.checked) return;
+        if (!sourceBuffer || sourceBuffer.updating) return;
+
+        let next = null;
+        for (const k of videoDecrypted.keys()) {
+          if (k > videoLastAppended && (next === null || k < next)) next = k;
+        }
+        if (next === null) return;
+
+        const bytes = videoDecrypted.get(next);
+        if (!bytes) return;
+
+        try {
+          sourceBuffer.appendBuffer(bytes.buffer);
+          videoLastAppended = next;
+          if (videoDecrypted.size > 80) {
+            const del = videoLastAppended - 60;
+            for (const k of videoDecrypted.keys()) if (k < del) videoDecrypted.delete(k);
+          }
+        } catch (e) {
+          console.error(e);
+          setStatus(`admin append error: ${e.name || 'Error'}: ${e.message || e}`);
+        }
+      }
+
+      async function tryDecryptVideoChunk(chunkId) {
+        if (!previewVideoToggle.checked) return;
+        if (videoDecrypted.has(chunkId)) return;
+        const rec = videoKeys.get(chunkId);
         if (!rec) return;
 
-        // Only preview images (video chunks aren't directly previewable as <img>)
-        if (!rec.mime || !rec.mime.startsWith('image/')) return;
+        ensureVideoMse(rec.codec || rec.mime);
+        if (!sourceBuffer) return; // wait for sourceopen
 
         try {
           const payload = await blobFetch(rec.blobHash);
           const iv = payload.slice(0, 12);
           const ct = payload.slice(12);
-          const aad = await sha256Bytes(utf8Bytes(`${streamId}:${frameId}`));
+          const aad = await sha256Bytes(utf8Bytes(`${streamId}:${chunkId}`));
           const pt = await aesGcmDecrypt(rec.keyBytes, iv, ct, { aadBytes: aad });
-
-          const blob = new Blob([pt], { type: rec.mime });
-          previewEl.src = URL.createObjectURL(blob);
+          videoDecrypted.set(chunkId, pt);
+          pumpVideo();
         } catch (e) {
-          // Decrypt/preview is best-effort; don't break admin forwarding if preview fails.
-          console.warn('preview decrypt failed', e);
+          console.warn('admin video decrypt failed', e);
         }
       }
+
+      async function tryRenderPreview(frameId) {
+        const rec = adminFrameKeys.get(frameId);
+        if (!rec) return;
+
+        // image preview
+        if (rec.mime && rec.mime.startsWith('image/')) {
+          try {
+            const payload = await blobFetch(rec.blobHash);
+            const iv = payload.slice(0, 12);
+            const ct = payload.slice(12);
+            const aad = await sha256Bytes(utf8Bytes(`${streamId}:${frameId}`));
+            const pt = await aesGcmDecrypt(rec.keyBytes, iv, ct, { aadBytes: aad });
+            const blob = new Blob([pt], { type: rec.mime });
+            previewEl.src = URL.createObjectURL(blob);
+          } catch (e) {
+            console.warn('preview decrypt failed', e);
+          }
+        }
+
+        // video preview is handled separately via videoKeys/videoDecrypted
+      }
+
+      // Toggle UI
+      previewVideoToggle.onchange = () => {
+        const on = previewVideoToggle.checked;
+        previewVidEl.style.display = on ? '' : 'none';
+        if (!on) {
+          resetVideoPreview();
+        }
+      };
 
       setStatus('ready');
     </script>
