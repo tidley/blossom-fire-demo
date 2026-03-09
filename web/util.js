@@ -103,9 +103,12 @@ export function makeSignedEventUnsigned(kind, sk, { content = "", tags = [] } = 
 }
 
 export function nip44Encrypt(sk, recipientPubkeyHex, plaintext) {
-  return nip44.encrypt(sk, recipientPubkeyHex, plaintext);
+  // nostr-tools nip44.encrypt expects (plaintext, conversationKey, [nonce])
+  const conversationKey = nip44.getConversationKey(sk, recipientPubkeyHex);
+  return nip44.encrypt(plaintext, conversationKey);
 }
 
 export function nip44Decrypt(sk, senderPubkeyHex, ciphertext) {
-  return nip44.decrypt(sk, senderPubkeyHex, ciphertext);
+  const conversationKey = nip44.getConversationKey(sk, senderPubkeyHex);
+  return nip44.decrypt(ciphertext, conversationKey);
 }
