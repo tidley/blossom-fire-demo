@@ -1,0 +1,18 @@
+[info]
+relay_url = "ws://0.0.0.0:8080"
+name = "Local Demo Relay"
+description = "Local relay for Blossom Fire demo"
+
+[network]
+address = "0.0.0.0"
+port = 8080
+
+[limits]
+# Permissive for LAN demo
+messages_per_sec = 0
+subscriptions_per_min = 0
+
+[authorization]
+# Open relay for LAN demo
+pubkey_whitelist = []
+domain_whitelist = []

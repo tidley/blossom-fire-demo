@@ -1,0 +1,162 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Broadcast</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 16px; }
+      .row { display: flex; gap: 16px; flex-wrap: wrap; }
+      video, canvas, img { max-width: 360px; width: 100%; border: 1px solid #ddd; border-radius: 8px; }
+      input, button { font-size: 16px; }
+      .box { padding: 12px; border: 1px solid #ddd; border-radius: 8px; }
+      code { background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <h2>Broadcast (camera → encrypted slideshow)</h2>
+    <div class="box">
+      <div>Stream: <code id="stream"></code></div>
+      <div>Broadcaster npub: <code id="npub"></code></div>
+      <div>Status: <span id="status">idle</span></div>
+      <div style="margin-top:10px;">
+        <label>FPS (frames/sec): <input id="fps" type="number" value="1" min="0.2" step="0.2" style="width:80px;"></label>
+        <button id="start">Start</button>
+        <button id="stop" disabled>Stop</button>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:16px;">
+      <div>
+        <div>Camera preview</div>
+        <video id="vid" autoplay playsinline muted></video>
+      </div>
+      <div>
+        <div>Last frame (plaintext)</div>
+        <canvas id="cv"></canvas>
+      </div>
+    </div>
+
+    <script type="module">
+      import { TAG_DEMO, TAG_ADMINKEY, ADMIN_SK_HEX } from './config.js';
+      import { blobUpload } from './blob.js';
+      import { aesGcmEncrypt, randKey32, utf8Bytes, b64encode } from './crypto.js';
+      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, nip44Encrypt, skFromHex, pubkeyFromSk, npubFromPubkey } from './util.js';
+
+      const streamId = getStreamId();
+      document.querySelector('#stream').textContent = streamId;
+
+      // Broadcaster identity (stored locally)
+      const broadcaster = getOrCreateViewerKeypair('demo.broadcaster.sk');
+      document.querySelector('#npub').textContent = broadcaster.npub;
+
+      // Admin identity is hardcoded for now (same across admin/broadcast)
+      const adminSk = skFromHex(ADMIN_SK_HEX);
+      const adminPub = pubkeyFromSk(adminSk);
+
+      const statusEl = document.querySelector('#status');
+      const vid = document.querySelector('#vid');
+      const cv = document.querySelector('#cv');
+      const fpsEl = document.querySelector('#fps');
+      const startBtn = document.querySelector('#start');
+      const stopBtn = document.querySelector('#stop');
+
+      let running = false;
+      let frameId = 0;
+      let timer = null;
+      let mediaStream = null;
+
+      function setStatus(s) { statusEl.textContent = s; }
+
+      async function setupCamera() {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        vid.srcObject = mediaStream;
+        await vid.play();
+      }
+
+      async function captureToCanvas() {
+        const w = Math.min(640, vid.videoWidth || 640);
+        const h = Math.round(w * ((vid.videoHeight || 480) / (vid.videoWidth || 640)));
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext('2d');
+        ctx.drawImage(vid, 0, 0, w, h);
+        const blob = await new Promise((resolve) => cv.toBlob(resolve, 'image/webp', 0.72));
+        const buf = await blob.arrayBuffer();
+        return new Uint8Array(buf);
+      }
+
+      async function tick() {
+        if (!running) return;
+        try {
+          const plaintext = await captureToCanvas();
+          const key = randKey32();
+
+          const aad = utf8Bytes(`${streamId}:${frameId}`);
+          const { iv, ciphertext } = await aesGcmEncrypt(key, plaintext, { aadBytes: aad });
+
+          // upload payload: iv || ciphertext
+          const payload = new Uint8Array(iv.length + ciphertext.length);
+          payload.set(iv, 0);
+          payload.set(ciphertext, iv.length);
+
+          const hash = await blobUpload(payload);
+
+          // public frame announcement
+          const ann = makeSignedEventUnsigned(1, broadcaster.sk, {
+            content: '',
+            tags: [
+              ['t', TAG_DEMO],
+              ['d', streamId],
+              ['i', String(frameId)],
+              ['x', hash],
+              ['m', 'image/webp'],
+            ]
+          });
+          await publish(ann);
+
+          // send key to admin via NIP-44 DM (kind 4)
+          const keyMsg = JSON.stringify({ streamId, frameId, x: hash, k: b64encode(key), m: 'image/webp', alg: 'aes-gcm', v: 1 });
+          const enc = nip44Encrypt(broadcaster.sk, adminPub, keyMsg);
+          const dm = makeSignedEventUnsigned(4, broadcaster.sk, {
+            content: enc,
+            tags: [ ['p', adminPub], ['t', TAG_ADMINKEY], ['d', streamId], ['i', String(frameId)] ]
+          });
+          await publish(dm);
+
+          setStatus(`sent frame ${frameId} → ${hash.slice(0, 8)}…`);
+          frameId++;
+        } catch (e) {
+          console.error(e);
+          setStatus(`error: ${e.message || e}`);
+        }
+      }
+
+      startBtn.onclick = async () => {
+        if (running) return;
+        running = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        setStatus('starting camera…');
+        await setupCamera();
+        setStatus('running');
+        const fps = Math.max(0.2, Number(fpsEl.value || 1));
+        const ms = Math.round(1000 / fps);
+        timer = setInterval(tick, ms);
+        tick();
+      };
+
+      stopBtn.onclick = () => {
+        running = false;
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        if (timer) clearInterval(timer);
+        timer = null;
+        if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+        setStatus('stopped');
+      };
+
+      setStatus('ready');
+    </script>
+  </body>
+</html>

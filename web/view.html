@@ -1,0 +1,127 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>View</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 16px; }
+      .box { padding: 12px; border: 1px solid #ddd; border-radius: 8px; }
+      code { background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }
+      img { width: 100%; max-width: 720px; border: 1px solid #ddd; border-radius: 8px; margin-top: 12px; }
+      .small { color: #666; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h2>Viewer</h2>
+    <div class="box">
+      <div>Stream: <code id="stream"></code></div>
+      <div>Your npub: <code id="npub"></code></div>
+      <div>Status: <span id="status">starting…</span></div>
+      <div class="small">This page auto-generates a nostr keypair (stored in localStorage) and auto-requests access.</div>
+    </div>
+
+    <img id="img" />
+
+    <script type="module">
+      import { TAG_REQ, TAG_DEMO } from './config.js';
+      import { blobFetch } from './blob.js';
+      import { aesGcmDecrypt, b64decode, utf8Bytes } from './crypto.js';
+      import {
+        getStreamId,
+        getOrCreateViewerKeypair,
+        makeSignedEventUnsigned,
+        publish,
+        sub,
+        nip44Decrypt,
+      } from './util.js';
+
+      const streamId = getStreamId();
+      document.querySelector('#stream').textContent = streamId;
+
+      const viewer = getOrCreateViewerKeypair('demo.viewer.sk');
+      document.querySelector('#npub').textContent = viewer.npub;
+
+      const statusEl = document.querySelector('#status');
+      const imgEl = document.querySelector('#img');
+
+      // frameId -> { keyB64, blobHash, mime }
+      const keys = new Map();
+      // frameId -> blobHash (announced)
+      const announced = new Map();
+
+      function setStatus(s) { statusEl.textContent = s; }
+
+      // Auto-request access
+      const req = makeSignedEventUnsigned(1, viewer.sk, {
+        content: 'request',
+        tags: [ ['t', TAG_REQ], ['d', streamId] ]
+      });
+      await publish(req);
+      setStatus('requested access; waiting for keys…');
+
+      // Subscribe to frame announcements
+      sub([
+        { kinds: [1], '#t': [TAG_DEMO], '#d': [streamId], limit: 50 }
+      ], async (ev) => {
+        try {
+          const frameIdTag = ev.tags.find(t => t[0]==='i');
+          const blobTag = ev.tags.find(t => t[0]==='x');
+          const mimeTag = ev.tags.find(t => t[0]==='m');
+          if (!frameIdTag || !blobTag) return;
+
+          const frameId = Number(frameIdTag[1]);
+          const blobHash = blobTag[1];
+          const mime = (mimeTag && mimeTag[1]) || 'image/webp';
+
+          announced.set(frameId, { blobHash, mime });
+          await tryRender(frameId);
+        } catch (e) {
+          console.error(e);
+        }
+      });
+
+      // Subscribe to DMs addressed to this viewer (keys)
+      sub([
+        { kinds: [4], '#p': [viewer.pk], '#d': [streamId], limit: 200 }
+      ], async (ev) => {
+        try {
+          const plaintext = nip44Decrypt(viewer.sk, ev.pubkey, ev.content);
+          const msg = JSON.parse(plaintext);
+          if (msg.streamId !== streamId) return;
+
+          keys.set(Number(msg.frameId), { keyB64: msg.k, blobHash: msg.x, mime: msg.m || 'image/webp' });
+          setStatus(`allowed; got key for frame ${msg.frameId}`);
+          await tryRender(Number(msg.frameId));
+        } catch (e) {
+          // likely not decryptable
+        }
+      });
+
+      async function tryRender(frameId) {
+        const k = keys.get(frameId);
+        const a = announced.get(frameId);
+        if (!k || !a) return;
+
+        const blobHash = k.blobHash || a.blobHash;
+        const mime = k.mime || a.mime;
+
+        const payload = await blobFetch(blobHash);
+        const iv = payload.slice(0, 12);
+        const ct = payload.slice(12);
+        const keyBytes = b64decode(k.keyB64);
+        const aad = utf8Bytes(`${streamId}:${frameId}`);
+
+        try {
+          const pt = await aesGcmDecrypt(keyBytes, iv, ct, { aadBytes: aad });
+          const blob = new Blob([pt], { type: mime });
+          imgEl.src = URL.createObjectURL(blob);
+        } catch (e) {
+          setStatus('have blob but not allowed (or wrong key)');
+        }
+      }
+
+      setStatus('requested access; waiting…');
+    </script>
+  </body>
+</html>

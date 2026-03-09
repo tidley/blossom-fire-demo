@@ -1,0 +1,8 @@
+# demo data
+/data/
+
+# local secrets
+web/config.local.js
+
+# OS
+.DS_Store
