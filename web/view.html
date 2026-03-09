@@ -26,7 +26,7 @@
     <script type="module">
       import { TAG_REQ, TAG_DEMO } from './config.js';
       import { blobFetch } from './blob.js';
-      import { aesGcmDecrypt, b64decode, utf8Bytes } from './crypto.js';
+      import { aesGcmDecrypt, b64decode, utf8Bytes, sha256Bytes } from './crypto.js';
       import {
         getStreamId,
         getOrCreateViewerKeypair,
@@ -110,7 +110,7 @@
         const iv = payload.slice(0, 12);
         const ct = payload.slice(12);
         const keyBytes = b64decode(k.keyB64);
-        const aad = utf8Bytes(`${streamId}:${frameId}`);
+        const aad = await sha256Bytes(utf8Bytes(`${streamId}:${frameId}`));
 
         try {
           const pt = await aesGcmDecrypt(keyBytes, iv, ct, { aadBytes: aad });

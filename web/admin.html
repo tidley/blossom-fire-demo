@@ -47,7 +47,7 @@
     <script type="module">
       import { TAG_REQ, TAG_ADMINKEY, ADMIN_SK_HEX } from './config.js';
       import { blobFetch } from './blob.js';
-      import { aesGcmDecrypt, b64decode, utf8Bytes } from './crypto.js';
+      import { aesGcmDecrypt, b64decode, utf8Bytes, sha256Bytes } from './crypto.js';
       import {
         getStreamId,
         skFromHex,
@@ -189,7 +189,7 @@
         const payload = await blobFetch(rec.blobHash);
         const iv = payload.slice(0, 12);
         const ct = payload.slice(12);
-        const aad = utf8Bytes(`${streamId}:${frameId}`);
+        const aad = await sha256Bytes(utf8Bytes(`${streamId}:${frameId}`));
         const pt = await aesGcmDecrypt(rec.keyBytes, iv, ct, { aadBytes: aad });
         const blob = new Blob([pt], { type: rec.mime });
         previewEl.src = URL.createObjectURL(blob);

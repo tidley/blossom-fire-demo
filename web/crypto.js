@@ -35,6 +35,11 @@ export function utf8Bytes(s) {
   return new TextEncoder().encode(s);
 }
 
+export async function sha256Bytes(bytes) {
+  const buf = await crypto.subtle.digest("SHA-256", bytes);
+  return new Uint8Array(buf);
+}
+
 export function b64encode(bytes) {
   let bin = "";
   for (const b of bytes) bin += String.fromCharCode(b);
