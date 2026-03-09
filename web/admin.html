@@ -118,14 +118,17 @@
       };
 
       // Subscribe to access requests (public)
+      // Some relays are finicky about multi-tag queries; keep the filter minimal.
       sub([
         {
           kinds: [1],
           '#t': [TAG_REQ],
-          '#d': [streamId],
           limit: 200,
         }
       ], (ev) => {
+        // Only handle this streamId
+        const d = ev.tags.find(t => t[0] === 'd');
+        if (!d || d[1] !== streamId) return;
         const pub = ev.pubkey;
         if (!viewers.has(pub)) {
           viewers.set(pub, { allowed: false, lastSeen: ev.created_at, npub: npubFromPubkey(pub) });
@@ -139,12 +142,11 @@
       });
 
       // Subscribe to broadcaster→admin key DMs (kind 4)
+      // Keep filter minimal: kind 4 + our pubkey. We'll inspect tags/content client-side.
       sub([
         {
           kinds: [4],
           '#p': [adminPub],
-          '#t': [TAG_ADMINKEY],
-          '#d': [streamId],
           limit: 200,
         }
       ], async (ev) => {
@@ -153,6 +155,12 @@
           const plaintext = nip44Decrypt(adminSk, ev.pubkey, ev.content);
           const msg = JSON.parse(plaintext);
           if (msg.streamId !== streamId) return;
+          // Optional tag check (best-effort)
+          const tTag = ev.tags.find(t => t[0]==='t');
+          if (tTag && tTag[1] !== TAG_ADMINKEY) {
+            // If tag present and not ours, ignore
+            return;
+          }
 
           const frameId = Number(msg.frameId);
           const blobHash = msg.x;
