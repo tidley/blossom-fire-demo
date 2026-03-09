@@ -199,6 +199,8 @@
         const ct = payload.slice(12);
         const aad = await sha256Bytes(utf8Bytes(`${streamId}:${frameId}`));
         const pt = await aesGcmDecrypt(rec.keyBytes, iv, ct, { aadBytes: aad });
+        // Only preview images (video chunks aren't directly previewable as <img>)
+        if (!rec.mime || !rec.mime.startsWith('image/')) return;
         const blob = new Blob([pt], { type: rec.mime });
         previewEl.src = URL.createObjectURL(blob);
       }

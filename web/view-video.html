@@ -1,0 +1,180 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>View Video</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 16px; }
+      .box { padding: 12px; border: 1px solid #ddd; border-radius: 8px; }
+      code { background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }
+      video { width: 100%; max-width: 900px; border: 1px solid #ddd; border-radius: 8px; margin-top: 12px; }
+      .small { color: #666; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h2>Viewer (near-live video)</h2>
+    <div class="box">
+      <div>Stream: <code id="stream"></code></div>
+      <div>Your npub: <code id="npub"></code></div>
+      <div>Status: <span id="status">starting…</span></div>
+      <div class="small">Auto-generates a nostr keypair (localStorage) and auto-requests access.</div>
+    </div>
+
+    <video id="v" controls autoplay playsinline muted></video>
+
+    <script type="module">
+      import { TAG_REQ, TAG_DEMO } from './config.js';
+      import { blobFetch } from './blob.js';
+      import { aesGcmDecrypt, b64decode, utf8Bytes, sha256Bytes } from './crypto.js';
+      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, sub, nip44Decrypt } from './util.js';
+
+      const streamId = getStreamId();
+      document.querySelector('#stream').textContent = streamId;
+
+      const viewer = getOrCreateViewerKeypair('demo.viewer.sk');
+      document.querySelector('#npub').textContent = viewer.npub;
+
+      const statusEl = document.querySelector('#status');
+      const videoEl = document.querySelector('#v');
+
+      function setStatus(s) { statusEl.textContent = s; }
+
+      // State
+      const keys = new Map();       // chunkId -> { keyB64, blobHash, mime, codec }
+      const announced = new Map();  // chunkId -> { blobHash, mime, codec }
+      const decrypted = new Map();  // chunkId -> Uint8Array
+      let lastRendered = -1;
+
+      let mediaSource = null;
+      let sourceBuffer = null;
+      let codecStr = null;
+
+      function ensureMse(codec) {
+        if (mediaSource) return;
+        codecStr = codec || 'video/webm;codecs=vp8,opus';
+        if (!('MediaSource' in window)) {
+          setStatus('error: MediaSource not supported in this browser');
+          return;
+        }
+        if (!MediaSource.isTypeSupported(codecStr)) {
+          setStatus(`error: codec not supported: ${codecStr}`);
+          return;
+        }
+        mediaSource = new MediaSource();
+        videoEl.src = URL.createObjectURL(mediaSource);
+        mediaSource.addEventListener('sourceopen', () => {
+          try {
+            sourceBuffer = mediaSource.addSourceBuffer(codecStr);
+            sourceBuffer.mode = 'sequence';
+            sourceBuffer.addEventListener('updateend', pump);
+            setStatus(`ready (codec ${codecStr})`);
+            pump();
+          } catch (e) {
+            console.error(e);
+            setStatus(`error creating SourceBuffer: ${e.message || e}`);
+          }
+        }, { once: true });
+      }
+
+      async function tryDecrypt(chunkId) {
+        if (decrypted.has(chunkId)) return;
+        const k = keys.get(chunkId);
+        const a = announced.get(chunkId);
+        if (!k || !a) return;
+
+        const blobHash = k.blobHash || a.blobHash;
+        const mime = k.mime || a.mime || 'video/webm';
+        const codec = k.codec || a.codec || mime;
+
+        ensureMse(codec);
+
+        const payload = await blobFetch(blobHash);
+        const iv = payload.slice(0, 12);
+        const ct = payload.slice(12);
+        const keyBytes = b64decode(k.keyB64);
+        const aad = await sha256Bytes(utf8Bytes(`${streamId}:${chunkId}`));
+        const pt = await aesGcmDecrypt(keyBytes, iv, ct, { aadBytes: aad });
+        decrypted.set(chunkId, pt);
+        pump();
+      }
+
+      function pump() {
+        if (!sourceBuffer || sourceBuffer.updating) return;
+        const next = lastRendered + 1;
+        const bytes = decrypted.get(next);
+        if (!bytes) return;
+        try {
+          sourceBuffer.appendBuffer(bytes.buffer);
+          lastRendered = next;
+          // free older chunks
+          if (decrypted.size > 50) {
+            const del = lastRendered - 40;
+            for (const k of decrypted.keys()) if (k < del) decrypted.delete(k);
+          }
+        } catch (e) {
+          console.error(e);
+          setStatus(`append error: ${e.message || e}`);
+        }
+      }
+
+      // Publish access request
+      const req = makeSignedEventUnsigned(1, viewer.sk, {
+        content: 'request',
+        tags: [ ['t', TAG_REQ], ['d', streamId] ]
+      });
+      await publish(req);
+      setStatus('requested access; waiting for keys…');
+
+      // Subscribe to announcements
+      sub([
+        { kinds: [1], '#t': [TAG_DEMO], limit: 200 }
+      ], async (ev) => {
+        try {
+          const dTag = ev.tags.find(t => t[0]==='d');
+          if (!dTag || dTag[1] !== streamId) return;
+          const idTag = ev.tags.find(t => t[0]==='i');
+          const xTag = ev.tags.find(t => t[0]==='x');
+          const mTag = ev.tags.find(t => t[0]==='m');
+          const cTag = ev.tags.find(t => t[0]==='c');
+          if (!idTag || !xTag) return;
+
+          const chunkId = Number(idTag[1]);
+          const blobHash = xTag[1];
+          const mime = (mTag && mTag[1]) || 'video/webm';
+          const codec = (cTag && cTag[1]) || mime;
+
+          // Ignore older chunks
+          if (chunkId <= lastRendered) return;
+
+          announced.set(chunkId, { blobHash, mime, codec });
+          await tryDecrypt(chunkId);
+        } catch (e) {
+          console.error(e);
+        }
+      });
+
+      // Subscribe to NIP-44 key DMs
+      sub([
+        { kinds: [4], '#p': [viewer.pk], '#d': [streamId], limit: 500 }
+      ], async (ev) => {
+        try {
+          const plaintext = nip44Decrypt(viewer.sk, ev.pubkey, ev.content);
+          const msg = JSON.parse(plaintext);
+          if (msg.streamId !== streamId) return;
+
+          const chunkId = Number(msg.frameId);
+          // Ignore old
+          if (chunkId <= lastRendered) return;
+
+          keys.set(chunkId, { keyB64: msg.k, blobHash: msg.x, mime: msg.m || 'video/webm', codec: msg.c || msg.m || 'video/webm' });
+          setStatus(`allowed; got key for chunk ${chunkId}`);
+          await tryDecrypt(chunkId);
+        } catch (e) {
+          // ignore undecryptable
+        }
+      });
+
+    </script>
+  </body>
+</html>
