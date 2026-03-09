@@ -194,15 +194,23 @@
       async function tryRenderPreview(frameId) {
         const rec = adminFrameKeys.get(frameId);
         if (!rec) return;
-        const payload = await blobFetch(rec.blobHash);
-        const iv = payload.slice(0, 12);
-        const ct = payload.slice(12);
-        const aad = await sha256Bytes(utf8Bytes(`${streamId}:${frameId}`));
-        const pt = await aesGcmDecrypt(rec.keyBytes, iv, ct, { aadBytes: aad });
+
         // Only preview images (video chunks aren't directly previewable as <img>)
         if (!rec.mime || !rec.mime.startsWith('image/')) return;
-        const blob = new Blob([pt], { type: rec.mime });
-        previewEl.src = URL.createObjectURL(blob);
+
+        try {
+          const payload = await blobFetch(rec.blobHash);
+          const iv = payload.slice(0, 12);
+          const ct = payload.slice(12);
+          const aad = await sha256Bytes(utf8Bytes(`${streamId}:${frameId}`));
+          const pt = await aesGcmDecrypt(rec.keyBytes, iv, ct, { aadBytes: aad });
+
+          const blob = new Blob([pt], { type: rec.mime });
+          previewEl.src = URL.createObjectURL(blob);
+        } catch (e) {
+          // Decrypt/preview is best-effort; don't break admin forwarding if preview fails.
+          console.warn('preview decrypt failed', e);
+        }
       }
 
       setStatus('ready');
