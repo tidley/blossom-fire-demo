@@ -145,8 +145,9 @@ Then open:
 - `https://DEMO_HOST/view.html?stream=demo1`
 
 Video pages:
-- `https://DEMO_HOST/broadcast-video.html?stream=demo1`
-- `https://DEMO_HOST/view-video.html?stream=demo1`
+- `https://DEMO_HOST/broadcast-video.html?stream=video3`
+- `https://DEMO_HOST/admin.html?stream=video3`
+- `https://DEMO_HOST/view-video.html?stream=video3`
 
 **Note:** camera + WebCrypto generally require HTTPS (secure context).
 
