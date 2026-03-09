@@ -142,6 +142,7 @@
           const chunkId = Number(idTag[1]);
           const blobHash = xTag[1];
           const mime = (mTag && mTag[1]) || 'video/webm';
+          if (!mime.startsWith('video/')) return;
           const codec = (cTag && cTag[1]) || mime;
 
           // Ignore older chunks
@@ -163,11 +164,15 @@
           const msg = JSON.parse(plaintext);
           if (msg.streamId !== streamId) return;
 
+          // Only accept video keys in the video viewer (avoid slideshow keys on same streamId)
+          const mime = msg.m || 'video/webm';
+          if (!mime.startsWith('video/')) return;
+
           const chunkId = Number(msg.frameId);
           // Ignore old
           if (chunkId <= lastRendered) return;
 
-          keys.set(chunkId, { keyB64: msg.k, blobHash: msg.x, mime: msg.m || 'video/webm', codec: msg.c || msg.m || 'video/webm' });
+          keys.set(chunkId, { keyB64: msg.k, blobHash: msg.x, mime, codec: msg.c || mime });
           setStatus(`allowed; got key for chunk ${chunkId}`);
           await tryDecrypt(chunkId);
         } catch (e) {
