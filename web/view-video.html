@@ -68,6 +68,10 @@
             sourceBuffer = mediaSource.addSourceBuffer(codecStr);
             sourceBuffer.mode = 'sequence';
             sourceBuffer.addEventListener('updateend', pump);
+            sourceBuffer.addEventListener('error', (e) => {
+              console.error('sourceBuffer error', e);
+              setStatus('sourceBuffer error (see console)');
+            });
             setStatus(`ready (codec ${codecStr})`);
             pump();
           } catch (e) {
@@ -101,20 +105,31 @@
 
       function pump() {
         if (!sourceBuffer || sourceBuffer.updating) return;
-        const next = lastRendered + 1;
+
+        // MediaRecorder viewers may join mid-stream; don't assume chunk 0 exists.
+        // Append the smallest available chunk > lastRendered.
+        let next = null;
+        for (const k of decrypted.keys()) {
+          if (k > lastRendered && (next === null || k < next)) next = k;
+        }
+        if (next === null) return;
+
+        // If there is a gap, we still append what we have (near-live best-effort).
         const bytes = decrypted.get(next);
         if (!bytes) return;
+
         try {
           sourceBuffer.appendBuffer(bytes.buffer);
           lastRendered = next;
+
           // free older chunks
-          if (decrypted.size > 50) {
-            const del = lastRendered - 40;
+          if (decrypted.size > 80) {
+            const del = lastRendered - 60;
             for (const k of decrypted.keys()) if (k < del) decrypted.delete(k);
           }
         } catch (e) {
           console.error(e);
-          setStatus(`append error: ${e.message || e}`);
+          setStatus(`append error: ${e.name || 'Error'}: ${e.message || e}`);
         }
       }
 
