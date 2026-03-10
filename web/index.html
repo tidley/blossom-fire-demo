@@ -6,31 +6,47 @@
     <title>Blossom Fire Demo</title>
     <style>
       :root { color-scheme: dark; }
-      body { font-family: system-ui, sans-serif; margin: 16px; background: #0b0e14; color: #e6edf3; }
-      .box { padding: 12px; border: 1px solid #2f3540; border-radius: 8px; background: #111826; }
-      .row { display: flex; gap: 16px; flex-wrap: wrap; }
-      .grid { display: grid; grid-template-columns: 1fr 420px; gap: 16px; align-items: start; }
-      @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
-      code { background: #1a2233; color: #d2e0ff; padding: 2px 4px; border-radius: 4px; }
-      a { color: #7ab8ff; }
-      .small { color: #9aa7bd; font-size: 12px; }
-      button, input { font-size: 16px; background: #1a2233; color: #e6edf3; border: 1px solid #3a4354; border-radius: 6px; }
-      button { padding: 6px 10px; cursor: pointer; }
-      video, canvas, img { max-width: 100%; border: 1px solid #2f3540; border-radius: 8px; background: #000; }
-      .viewer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid #253043; }
+      body { font-family: system-ui, sans-serif; margin: 0; background: #0b0e14; color: #e6edf3; }
+      .wrap { max-width: 860px; margin: 0 auto; padding: 28px 16px; }
+      h1 { margin: 0 0 6px; font-size: 28px; }
+      p { color: #9aa7bd; margin: 0 0 18px; }
+      code { background: #1a2233; color: #d2e0ff; padding: 2px 6px; border-radius: 4px; }
+      .card { border: 1px solid #2f3540; border-radius: 10px; background: #111826; padding: 14px; margin: 14px 0; }
+      .card h3 { margin: 0 0 10px; font-size: 17px; }
+      .btns { display: grid; gap: 10px; }
+      .btn {
+        display: block;
+        text-decoration: none;
+        color: #e6edf3;
+        background: #1a2233;
+        border: 1px solid #3a4354;
+        border-radius: 8px;
+        padding: 10px 12px;
+      }
+      .btn:hover { border-color: #7ab8ff; }
     </style>
   </head>
   <body>
-    <h2>Blossom Fire Demo</h2>
-    <p>Use <code>?stream=demo1</code> on each page.</p>
+    <div class="wrap">
+      <h1>Blossom Fire</h1>
+      <p>Pick a mode. Use <code>?stream=demo1</code> (or your stream id) on each page.</p>
 
-    <h3>Frames mode (slideshow)</h3>
-    <a href="/admin.html?stream=demo1">Admin</a>
-    <a href="/broadcast.html?stream=demo1">Broadcast Frames (camera → encrypted frames)</a>
-    <a href="/view.html?stream=demo1">View Frames (auto-keygen → request access)</a>
+      <section class="card">
+        <h3>Frames mode</h3>
+        <div class="btns">
+          <a class="btn" href="/admin.html?stream=demo1">Admin</a>
+          <a class="btn" href="/broadcast.html?stream=demo1">Broadcast Frames</a>
+          <a class="btn" href="/view.html?stream=demo1">View Frames</a>
+        </div>
+      </section>
 
-    <h3>Video mode (chunked)</h3>
-    <a href="/broadcast-video.html?stream=demo1">Broadcast Video (encrypted chunks)</a>
-    <a href="/view-video.html?stream=demo1">View Video (MSE playback)</a>
+      <section class="card">
+        <h3>Video mode</h3>
+        <div class="btns">
+          <a class="btn" href="/broadcast-video.html?stream=demo1">Broadcast Video</a>
+          <a class="btn" href="/view-video.html?stream=demo1">View Video</a>
+        </div>
+      </section>
+    </div>
   </body>
 </html>
