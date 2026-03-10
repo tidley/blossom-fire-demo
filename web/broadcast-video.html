@@ -46,7 +46,7 @@
       import { TAG_DEMO_VIDEO, ADMIN_SK_HEX } from './config.js';
       import { blobUpload } from './blob.js';
       import { aesGcmEncrypt, randKey32, utf8Bytes, b64encode } from './crypto.js';
-      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, skFromHex, pubkeyFromSk, nip17WrapJson } from './util.js';
+      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, sub, skFromHex, pubkeyFromSk, nip17WrapJson, nip17UnwrapJson } from './util.js';
 
       const streamId = (getStreamId() || 'demo1').trim() || 'demo1';
       document.querySelector('#stream').textContent = streamId;
@@ -70,7 +70,29 @@
       let running = false;
       let chosenMime = null;
 
+      // Keep decrypt key stable until admin indicates viewer list changed.
+      let currentKey = randKey32();
+      let keyId = `k-${Date.now()}`;
+
+      function rotateKey(reason = 'manual') {
+        currentKey = randKey32();
+        keyId = `k-${Date.now()}`;
+        setStatus(`rotated key (${reason})`);
+      }
+
       function setStatus(s) { statusEl.textContent = s; }
+
+      // Listen for admin rotate-key control messages.
+      sub([
+        { kinds: [1059], '#p': [broadcaster.pk], limit: 200 }
+      ], (ev) => {
+        try {
+          const { inner, msg } = nip17UnwrapJson(broadcaster.sk, ev);
+          if (inner.pubkey !== adminPub) return;
+          if (!msg || msg.streamId !== streamId) return;
+          if (msg.type === 'rotate_key') rotateKey(msg.reason || 'viewer-change');
+        } catch {}
+      });
 
       async function setupCamera() {
         mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
@@ -97,7 +119,7 @@
           const buf = await blob.arrayBuffer();
           const plaintext = new Uint8Array(buf);
 
-          const key = randKey32();
+          const key = currentKey;
           const aad = utf8Bytes(`${streamId}:${chunkId}`);
           const { iv, ciphertext } = await aesGcmEncrypt(key, plaintext, { aadBytes: aad });
 
@@ -126,13 +148,14 @@
             frameId: chunkId,
             x: hash,
             k: b64encode(key),
+            key_id: keyId,
             m: chosenMime || 'video/webm',
             alg: 'aes-gcm',
             v: 1,
           });
           await publish(dm);
 
-          setStatus(`sent chunk ${chunkId} → ${hash.slice(0,8)}… (${blob.size} bytes)`);
+          setStatus(`sent chunk ${chunkId} → ${hash.slice(0,8)}… (${blob.size} bytes, key ${keyId})`);
           chunkId++;
         } catch (e) {
           console.error(e);

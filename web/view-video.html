@@ -59,6 +59,8 @@
       const keys = new Map();      // chunkId -> { keyB64, blobHash, mime }
       const announced = new Map(); // chunkId -> { blobHash, mime }
       const appended = new Set();
+      let currentKeyB64 = null;
+      let currentKeyId = null;
 
       function setStatus(s) { statusEl.textContent = s; }
 
@@ -147,12 +149,15 @@
           if (!msg || msg.type !== 'viewerkey') return;
           if (msg.streamId !== streamId) return;
 
+          if (msg.k) currentKeyB64 = msg.k;
+          if (msg.key_id) currentKeyId = msg.key_id;
+
           keys.set(Number(msg.frameId), {
-            keyB64: msg.k,
+            keyB64: msg.k || currentKeyB64,
             blobHash: msg.x,
             mime: msg.m || 'video/webm'
           });
-          setStatus(`allowed; got key for chunk ${msg.frameId}`);
+          setStatus(`allowed; got key meta for chunk ${msg.frameId}${currentKeyId ? ` (${currentKeyId})` : ''}`);
           await tryAppend(Number(msg.frameId));
         } catch {}
       });
@@ -165,6 +170,7 @@
 
         const blobHash = k.blobHash || a?.blobHash;
         if (!blobHash) return;
+        if (!k.keyB64) return;
         const payload = await blobFetch(blobHash);
         const iv = payload.slice(0, 12);
         const ct = payload.slice(12);

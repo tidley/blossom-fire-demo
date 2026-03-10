@@ -33,6 +33,7 @@
         <div style="margin-top:10px;">
           <div class="small">Live preview (decrypting like a viewer, using admin-delivered keys)</div>
           <img id="preview" />
+          <video id="previewVideo" controls autoplay playsinline muted style="display:none; margin-top:10px;"></video>
         </div>
       </div>
 
@@ -71,14 +72,80 @@
       const statusEl = document.querySelector('#status');
       const viewersEl = document.querySelector('#viewers');
       const previewEl = document.querySelector('#preview');
+      const previewVideoEl = document.querySelector('#previewVideo');
 
       // viewerPubkeyHex -> { allowed, lastSeen, npub }
       const viewers = new Map();
+      const broadcasters = new Set();
+      const lastSentKeyIdByViewer = new Map();
 
-      // frameId -> { keyBytes, blobHash, mime }
+      // frameId -> { keyBytes, blobHash, mime, keyId }
       const adminFrameKeys = new Map();
 
+      // MSE preview for video chunks
+      const videoMimeCandidates = [
+        'video/webm; codecs="vp8,opus"',
+        'video/webm; codecs="vp9,opus"',
+        'video/webm',
+      ];
+      const previewMseMime = videoMimeCandidates.find(m => MediaSource.isTypeSupported(m));
+      const previewMs = new MediaSource();
+      let previewSb = null;
+      const previewQueue = [];
+      previewVideoEl.src = URL.createObjectURL(previewMs);
+      previewMs.addEventListener('sourceopen', () => {
+        if (!previewMseMime || previewSb) return;
+        previewSb = previewMs.addSourceBuffer(previewMseMime);
+        previewSb.mode = 'segments';
+        previewSb.addEventListener('updateend', pumpPreview);
+        pumpPreview();
+      });
+
+      function enqueuePreview(bytes) {
+        previewQueue.push(bytes);
+        pumpPreview();
+      }
+
+      function pumpPreview() {
+        if (!previewSb || previewSb.updating) return;
+        if (previewQueue.length === 0) return;
+        const next = previewQueue.shift();
+        try { previewSb.appendBuffer(next); } catch (e) { console.error(e); }
+      }
+
       function setStatus(s) { statusEl.textContent = s; }
+
+      function allowedFingerprint() {
+        return Array.from(viewers.entries())
+          .filter(([, v]) => !!v.allowed)
+          .map(([pub]) => pub)
+          .sort()
+          .join('|');
+      }
+      let lastViewerFingerprint = '';
+
+      async function notifyBroadcastersRotate() {
+        for (const bpub of broadcasters) {
+          try {
+            const dm = await nip17WrapJson(adminSk, bpub, {
+              type: 'rotate_key',
+              streamId,
+              reason: 'viewer_list_changed',
+              ts: Math.floor(Date.now() / 1000),
+            });
+            publish(dm);
+          } catch (e) {
+            console.warn('rotate notify failed', e);
+          }
+        }
+      }
+
+      async function maybeRotateOnViewerChange() {
+        const fp = allowedFingerprint();
+        if (fp === lastViewerFingerprint) return;
+        lastViewerFingerprint = fp;
+        await notifyBroadcastersRotate();
+      }
 
       function renderViewers() {
         viewersEl.innerHTML = '';
@@ -98,10 +165,12 @@
           const cb = document.createElement('input');
           cb.type = 'checkbox';
           cb.checked = !!v.allowed;
-          cb.onchange = () => {
+          cb.onchange = async () => {
             v.allowed = cb.checked;
             v.lastSeen = Math.floor(Date.now()/1000);
             viewers.set(pub, v);
+            if (!v.allowed) lastSentKeyIdByViewer.delete(pub);
+            await maybeRotateOnViewerChange();
           };
 
           right.appendChild(document.createTextNode('allow '));
@@ -113,9 +182,11 @@
         }
       }
 
-      document.querySelector('#clear').onclick = () => {
+      document.querySelector('#clear').onclick = async () => {
         viewers.clear();
+        lastSentKeyIdByViewer.clear();
         renderViewers();
+        await maybeRotateOnViewerChange();
       };
 
       // Subscribe to access requests (public)
@@ -168,33 +239,38 @@
 
           if (msg.type !== 'adminkey') return;
 
+          broadcasters.add(inner.pubkey);
+
           const frameId = Number(msg.frameId);
           const blobHash = msg.x;
           const keyBytes = b64decode(msg.k);
           const mime = msg.m || 'image/webp';
+          const keyId = msg.key_id || 'default';
 
-          adminFrameKeys.set(frameId, { keyBytes, blobHash, mime });
+          adminFrameKeys.set(frameId, { keyBytes, blobHash, mime, keyId });
 
-          // Live preview
-          await tryRenderPreview(frameId);
-
-          // Forward key to allowed viewers
+          // Forward to allowed viewers immediately; include key only on key change per viewer.
           for (const [viewerPub, v] of viewers.entries()) {
             if (!v.allowed) continue;
+            const includeKey = lastSentKeyIdByViewer.get(viewerPub) !== keyId;
             const dm = await nip17WrapJson(adminSk, viewerPub, {
               type: 'viewerkey',
               streamId,
               frameId,
               x: blobHash,
-              k: msg.k,
+              ...(includeKey ? { k: msg.k, key_id: keyId } : { key_id: keyId }),
               m: mime,
               alg: msg.alg || 'aes-gcm',
               v: 1,
             });
-            publish(dm); // don't await each
+            lastSentKeyIdByViewer.set(viewerPub, keyId);
+            publish(dm); // fire-and-forget for latency
           }
 
-          setStatus(`got key for frame ${frameId} from ${npubFromPubkey(inner.pubkey)}`);
+          // Live preview (non-blocking)
+          tryRenderPreview(frameId);
+
+          setStatus(`got key for frame ${frameId} from ${npubFromPubkey(inner.pubkey)} (key ${keyId})`);
         } catch (e) {
           console.error(e);
           setStatus(`error decrypting adminkey dm: ${e.message || e}`);
@@ -209,10 +285,24 @@
         const ct = payload.slice(12);
         const aad = utf8Bytes(`${streamId}:${frameId}`);
         const pt = await aesGcmDecrypt(rec.keyBytes, iv, ct, { aadBytes: aad });
+
+        if ((rec.mime || '').startsWith('video/')) {
+          previewEl.style.display = 'none';
+          previewVideoEl.style.display = 'block';
+          enqueuePreview(pt);
+          if (previewVideoEl.paused) {
+            try { await previewVideoEl.play(); } catch {}
+          }
+          return;
+        }
+
+        previewVideoEl.style.display = 'none';
+        previewEl.style.display = 'block';
         const blob = new Blob([pt], { type: rec.mime });
         previewEl.src = URL.createObjectURL(blob);
       }
 
+      lastViewerFingerprint = allowedFingerprint();
       setStatus('ready');
     </script>
   </body>
