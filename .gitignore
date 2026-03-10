@@ -7,6 +7,9 @@ node_modules/
 # local secrets
 web/config.local.js
 
+# wasm-pack output (build artifact)
+web/pkg_mls/
+
 # test artifacts
 playwright-report/
 test-results/

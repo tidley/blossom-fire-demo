@@ -1,6 +1,17 @@
 # Blossom Fire Demo (POC)
 
-This repo is a proof-of-concept for **client-side encrypted media hosting** (Blossom-style blob storage) with **per-npub access control** using **NIP-44** key delivery over Nostr.
+This repo is a proof-of-concept for **client-side encrypted media hosting** (Blossom-style blob storage) with **per-npub access control**.
+
+### Why it’s called “Blossom Fire”
+
+Because once ciphertext starts spreading across blob hosts, caches, and mirrors, it becomes **hard to “put out”**: even if one provider blocks you or goes down, the content can keep propagating and staying available — while access remains controlled by cryptographic keys.
+
+It now supports an experimental **MLS (Messaging Layer Security)** group-key flow using **OpenMLS compiled to WASM** (Rust → wasm-bindgen/wasm-pack). Nostr is used as transport:
+
+- **Join requests** are public kind 1 events (tagged `t=blossom-fire-demo-req`).
+- **Welcome/Commit messages** are delivered over encrypted DMs (currently kind 4 with NIP-44 encryption as a lightweight transport wrapper).
+
+If the WASM package is not built/available, the app falls back to a **DummyMlsGroup** that behaves like the old per-frame-key demo.
 
 It implements a "near-live" **encrypted slideshow** first (camera → frames → encrypted blobs), because it’s the simplest way to prove:
 
@@ -14,16 +25,19 @@ Once this is proven, the exact same pattern upgrades to **near-live video** (Med
 
 ## What’s happening (end-to-end)
 
-### Core crypto pattern (envelope / hybrid encryption)
+### Core crypto pattern (MLS exporter → per-chunk keys)
 
-For each frame `i`:
+For each frame/chunk `i`:
 
-1. The broadcaster generates a fresh random symmetric key `K_i` (32 bytes).
-2. The frame bytes are encrypted with **AES-256-GCM** using `K_i`.
-3. The ciphertext is uploaded to the blob host ("Blossom" in spirit).
-4. Access control is enforced by who receives `K_i`.
+1. Admin maintains an MLS group (OpenMLS).
+2. Broadcaster/viewers join via **Join → Welcome → Commit**.
+3. Each member computes an **exporter secret** from the current MLS epoch.
+4. The per-frame key is derived deterministically:
+   - `K_i = SHA-256(exporter_secret || utf8(streamId + ":" + i))` (32 bytes)
+5. The frame bytes are encrypted with **AES-256-GCM** using `K_i`.
+6. The ciphertext is uploaded to the blob host.
 
-**Important:** blobs are public/guessable by hash, but the content is private without the key.
+**Important:** blobs are public/guessable by hash, but the content is private without the current MLS epoch secret.
 
 ### Fixed-size AAD
 Some WebCrypto implementations are picky about AES-GCM `additionalData` (AAD) length.
@@ -62,28 +76,45 @@ Each viewer auto-generates a Nostr keypair in the browser (stored in `localStora
 
 Admin uses this to populate the allowlist UI.
 
-#### Key delivery (kind 4 DM, NIP-44 encrypted)
+#### MLS Welcome/Commit transport (kind 4 DM, NIP-44 encrypted)
 
-- Broadcaster → Admin: sends `{streamId, frameId, blobHash, key}` so the admin can forward selectively.
-- Admin → Viewer: forwards the same key material only when the viewer is toggled ON.
+- Viewer/Broadcaster → Admin: posts a public join request containing an MLS `KeyPackage`.
+- Admin → New member: sends an encrypted DM with `{type:"mls_welcome", welcome, commit}`.
+- Admin → Existing members: sends an encrypted DM with `{type:"mls_commit", commit}` so everyone advances to the new epoch.
 
-Encryption is **NIP-44**:
+Encryption/transport is currently **kind 4 DMs** with **NIP-44** (a pragmatic transport wrapper).
 
-- `conversationKey = nip44.getConversationKey(senderPrivkey, recipientPubkey)`
-- `ciphertext = nip44.encrypt(plaintextJson, conversationKey)`
-
-Revocation is "forward-only": once a viewer has a key, you can’t take it back, but you can stop sending **future** keys, so the stream stops at the next frame.
+Revocation remains "forward-only" at the epoch level: removing members isn’t implemented yet; but after each add/commit, only current members can derive future keys.
 
 ---
 
 ## Components
 
 - `web/`
-  - `broadcast.html`: capture camera → encode frame → encrypt → upload → announce + DM key to admin
-  - `admin.html`: show waiting viewers; toggle ON/OFF; receive broadcaster keys and forward to allowed viewers
-  - `view.html`: auto-keygen + access request; fetch ciphertext + decrypt when key arrives
+  - `broadcast.html`: camera → encrypt with MLS-derived keys → upload → announce
+  - `admin.html`: MLS group admin; approves join requests; sends Welcome/Commit
+  - `view.html`: join MLS; fetch ciphertext + decrypt via MLS-derived keys
+- `mls-wasm/`: Rust crate compiled to WASM (OpenMLS) used by the web pages
 - `blob/server.js`: minimal blob store used like Blossom (upload bytes → hash; fetch by hash). Includes permissive CORS for the demo.
 - `relay/config.toml`: nostr-rs-relay config (ensure relay accepts writes).
+
+### Build the OpenMLS WASM package
+
+This step is optional (the demo will fall back to `DummyMlsGroup`), but required for the real MLS flow.
+
+Prereqs:
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo install wasm-pack
+```
+
+Build:
+
+```bash
+cd mls-wasm
+wasm-pack build --release --target web --out-dir ../web/pkg_mls
+```
 
 ---
 

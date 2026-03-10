@@ -1,0 +1,707 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Blossom Fire — Public Ciphertext, Private Access</title>
+  <style>
+    :root{
+      --bg:#0b0e14;
+      --panel:rgba(255,255,255,0.06);
+      --panel2:rgba(255,255,255,0.08);
+      --text:#e9eefc;
+      --muted:rgba(233,238,252,0.72);
+      --faint:rgba(233,238,252,0.55);
+      --accent:#7c5cff;
+      --accent2:#00d4ff;
+      --good:#00ff99;
+      --warn:#ffd166;
+      --bad:#ff5c7a;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      --shadow: 0 18px 50px rgba(0,0,0,0.45);
+    }
+
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family:var(--sans);
+      color:var(--text);
+      background:
+        radial-gradient(1200px 800px at 20% 15%, rgba(124,92,255,0.22), transparent 60%),
+        radial-gradient(900px 700px at 85% 25%, rgba(0,212,255,0.15), transparent 60%),
+        radial-gradient(800px 600px at 50% 90%, rgba(0,255,153,0.08), transparent 60%),
+        linear-gradient(180deg, #070a10 0%, var(--bg) 55%, #070a10 100%);
+      overflow:hidden;
+    }
+
+    /* Deck layout */
+    .deck{
+      position:relative;
+      height:100%;
+      width:100%;
+      display:flex;
+      align-items:stretch;
+      justify-content:center;
+      padding: clamp(14px, 2.2vw, 28px);
+    }
+
+    .stage{
+      width:min(1200px, 100%);
+      height:100%;
+      position:relative;
+      border-radius: 18px;
+      overflow:hidden;
+      box-shadow: var(--shadow);
+      background: rgba(0,0,0,0.22);
+      outline: 1px solid rgba(255,255,255,0.08);
+      backdrop-filter: blur(10px);
+    }
+
+    .slides{
+      position:absolute;
+      inset:0;
+    }
+
+    .slide{
+      position:absolute;
+      inset:0;
+      padding: clamp(24px, 3.2vw, 56px);
+      display:grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 18px;
+      opacity:0;
+      transform: translateY(8px) scale(0.995);
+      transition: opacity 260ms ease, transform 260ms ease;
+      pointer-events:none;
+    }
+
+    .slide.active{
+      opacity:1;
+      transform: translateY(0) scale(1);
+      pointer-events:auto;
+    }
+
+    .topbar{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:16px;
+    }
+
+    .kicker{
+      display:flex;
+      align-items:center;
+      gap:10px;
+      font-family:var(--mono);
+      font-size:12px;
+      letter-spacing:0.12em;
+      text-transform:uppercase;
+      color: var(--muted);
+    }
+
+    .pill{
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding: 7px 10px;
+      border-radius:999px;
+      background: var(--panel);
+      outline: 1px solid rgba(255,255,255,0.10);
+    }
+
+    .dot{width:8px;height:8px;border-radius:999px;background:var(--accent2); box-shadow:0 0 0 4px rgba(0,212,255,0.12)}
+
+    h1,h2,h3{margin:0; line-height:1.05}
+    h1{font-size: clamp(38px, 5.2vw, 68px); letter-spacing:-0.02em}
+    h2{font-size: clamp(30px, 4.0vw, 50px); letter-spacing:-0.02em}
+    h3{font-size: clamp(18px, 2.2vw, 28px); letter-spacing:-0.01em; color: var(--muted)}
+
+    .lead{
+      max-width: 72ch;
+      font-size: clamp(16px, 1.6vw, 22px);
+      color: var(--muted);
+      line-height:1.5;
+    }
+
+    .grid2{
+      display:grid;
+      grid-template-columns: 1.25fr 1fr;
+      gap: 18px;
+      align-items:stretch;
+    }
+    @media (max-width: 900px){
+      .grid2{grid-template-columns:1fr;}
+    }
+
+    .card{
+      background: var(--panel);
+      outline: 1px solid rgba(255,255,255,0.10);
+      border-radius: 16px;
+      padding: 18px 18px;
+    }
+
+    .card.strong{
+      background: linear-gradient(180deg, rgba(124,92,255,0.16), rgba(255,255,255,0.06));
+      outline: 1px solid rgba(124,92,255,0.28);
+    }
+
+    .card h4{
+      margin:0 0 10px 0;
+      font-size:14px;
+      font-family:var(--mono);
+      letter-spacing:0.10em;
+      text-transform:uppercase;
+      color: var(--faint);
+    }
+
+    ul{
+      margin:0;
+      padding-left: 18px;
+      color: var(--muted);
+      line-height:1.55;
+      font-size: clamp(14px, 1.4vw, 18px);
+    }
+
+    .bigline{
+      font-size: clamp(18px, 2.4vw, 30px);
+      color: var(--text);
+      line-height:1.25;
+      margin-top: 8px;
+    }
+
+    .mono{
+      font-family: var(--mono);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .diagram{
+      display:grid;
+      gap:12px;
+    }
+
+    .node{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:14px;
+      padding: 14px 14px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.05);
+      outline: 1px solid rgba(255,255,255,0.10);
+    }
+
+    .node .label{font-weight:650; letter-spacing:-0.01em}
+    .node .tag{font-family:var(--mono); font-size:12px; color:var(--faint)}
+
+    .arrow{
+      height: 18px;
+      display:flex;
+      align-items:center;
+      color: rgba(233,238,252,0.55);
+      font-family:var(--mono);
+      font-size:12px;
+      letter-spacing:0.06em;
+      gap:10px;
+      padding-left:10px;
+    }
+    .arrow:before{content:""; flex:1; height:1px; background: rgba(255,255,255,0.14)}
+    .arrow:after{content:"→"; color: rgba(233,238,252,0.75)}
+
+    .footer{
+      display:flex;
+      align-items:flex-end;
+      justify-content:space-between;
+      gap: 16px;
+      color: var(--faint);
+      font-family:var(--mono);
+      font-size:12px;
+    }
+
+    .progress{
+      position:absolute;
+      left:0;
+      bottom:0;
+      height:3px;
+      width:100%;
+      background: rgba(255,255,255,0.07);
+    }
+    .progress > div{
+      height:100%;
+      width:0%;
+      background: linear-gradient(90deg, var(--accent2), var(--accent));
+      transition: width 240ms ease;
+    }
+
+    .hud{
+      position:absolute;
+      right: 14px;
+      bottom: 12px;
+      display:flex;
+      gap:10px;
+      align-items:center;
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(0,0,0,0.35);
+      outline: 1px solid rgba(255,255,255,0.10);
+      font-family: var(--mono);
+      font-size:12px;
+      color: rgba(233,238,252,0.70);
+      user-select:none;
+      backdrop-filter: blur(10px);
+    }
+
+    .hud kbd{
+      font-family: var(--mono);
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.08);
+      outline: 1px solid rgba(255,255,255,0.10);
+      color: rgba(233,238,252,0.86);
+    }
+
+    .reveal > *{opacity:0; transform: translateY(8px); transition: opacity 220ms ease, transform 220ms ease;}
+    .reveal[data-step="0"] > *:nth-child(1){opacity:1; transform:none}
+    .reveal[data-step="1"] > *:nth-child(-n+2){opacity:1; transform:none}
+    .reveal[data-step="2"] > *:nth-child(-n+3){opacity:1; transform:none}
+    .reveal[data-step="3"] > *{opacity:1; transform:none}
+
+    .callout{
+      padding: 14px 14px;
+      border-radius: 14px;
+      background: rgba(0,255,153,0.08);
+      outline: 1px solid rgba(0,255,153,0.22);
+      color: rgba(233,238,252,0.82);
+    }
+    .callout strong{color: var(--good)}
+
+    .badges{display:flex; gap:10px; flex-wrap:wrap}
+    .badge{
+      font-family: var(--mono);
+      font-size: 12px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.05);
+      outline: 1px solid rgba(255,255,255,0.10);
+      color: rgba(233,238,252,0.72);
+    }
+    .badge b{color: rgba(233,238,252,0.92)}
+
+    .compare{
+      display:grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 900px){
+      .compare{grid-template-columns:1fr;}
+    }
+    .col h4{margin:0 0 10px 0}
+
+    .metric{
+      display:grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+    .stat{
+      display:flex;
+      justify-content:space-between;
+      align-items:baseline;
+      gap: 12px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      background: rgba(255,255,255,0.05);
+      outline: 1px solid rgba(255,255,255,0.10);
+    }
+    .stat .n{font-size:18px; font-weight:750; letter-spacing:-0.01em}
+    .stat .k{font-family:var(--mono); font-size:12px; color: var(--faint)}
+
+    .note{
+      font-family: var(--mono);
+      font-size: 12px;
+      color: rgba(233,238,252,0.58);
+      line-height:1.45;
+    }
+
+    .titleGlow{
+      background: linear-gradient(90deg, rgba(0,212,255,0.9), rgba(124,92,255,0.95));
+      -webkit-background-clip:text;
+      background-clip:text;
+      color: transparent;
+    }
+
+    .corner{
+      position:absolute;
+      left: 16px;
+      bottom: 12px;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: rgba(233,238,252,0.55);
+      user-select:none;
+    }
+
+    /* Simple speaker notes (toggle with N) */
+    .notes{
+      position:absolute;
+      left: 14px;
+      top: 14px;
+      max-width: 520px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(0,0,0,0.52);
+      outline: 1px solid rgba(255,255,255,0.10);
+      backdrop-filter: blur(10px);
+      font-family: var(--mono);
+      font-size: 12px;
+      color: rgba(233,238,252,0.72);
+      line-height: 1.5;
+      display:none;
+      white-space: pre-wrap;
+    }
+    .notes.show{display:block}
+  </style>
+</head>
+<body>
+  <div class="deck">
+    <div class="stage" id="stage">
+      <div class="slides" id="slides">
+
+        <!-- Slide 1 -->
+        <section class="slide active" data-title="Title" data-notes="Blossom Fire: the core thesis is decoupling distribution from authorization. Public ciphertext, private access. This deck explains why it matters: censorship resistance, store-and-forward, untrusted hosting.">
+          <div class="topbar">
+            <div class="kicker">
+              <span class="pill"><span class="dot"></span> BLOSSOM FIRE</span>
+              <span class="pill">MLS + NIP-17 + BLOBS</span>
+            </div>
+            <div class="kicker"><span class="pill">v0.1 • POC</span></div>
+          </div>
+          <div>
+            <h1><span class="titleGlow">Public ciphertext.</span><br/>Private access.</h1>
+            <p class="lead">A demo architecture for resilient media distribution where anyone can fetch bytes, but only authorized members can decrypt — even if the hosting layer is untrusted or unstable.</p>
+            <div class="badges">
+              <span class="badge"><b>A</b> deplatforming resistance</span>
+              <span class="badge"><b>B</b> store-and-forward</span>
+              <span class="badge"><b>C</b> untrusted hosting</span>
+            </div>
+          </div>
+          <div class="footer">
+            <div>Use ← → / space • Toggle notes: <kbd>N</kbd></div>
+            <div>Blossom Fire Demo</div>
+          </div>
+        </section>
+
+        <!-- Slide 2 -->
+        <section class="slide" data-title="Thesis" data-notes="Say it in one line. Most services tie fetch permission to read permission. Fire splits them. You can mirror ciphertext without giving away plaintext.">
+          <div class="topbar">
+            <div class="kicker"><span class="pill"><span class="dot"></span> THESIS</span></div>
+            <div class="kicker"><span class="pill">distribution ≠ authorization</span></div>
+          </div>
+          <div class="grid2">
+            <div class="card strong">
+              <h4>One sentence</h4>
+              <div class="bigline">Fire separates <b>who can fetch</b> from <b>who can read</b>.</div>
+              <p class="lead">Distribution can be public, replicated, and cheap. Authorization is cryptographic and portable.</p>
+              <div class="callout"><strong>Implication:</strong> you can mirror ciphertext everywhere without granting access.</div>
+            </div>
+            <div class="card">
+              <h4>What changes</h4>
+              <ul>
+                <li>Blob hosts and relays become <b>untrusted plumbing</b>.</li>
+                <li>Access control is enforced by <b>key possession</b>, not server ACLs.</li>
+                <li>Failure mode shifts from “platform down = content gone” to “some sources down = degrade gracefully”.</li>
+              </ul>
+              <div class="note" style="margin-top:10px;">Key idea: make the hard thing (authorization) small and redundant; make the big thing (bytes) mirrorable.</div>
+            </div>
+          </div>
+          <div class="footer">
+            <div>Slide 2</div>
+            <div class="mono">public fetch • private decrypt</div>
+          </div>
+        </section>
+
+        <!-- Slide 3 -->
+        <section class="slide" data-title="System" data-notes="Walk through end-to-end: encrypt chunk, upload ciphertext to blossom, announce hash, deliver keys via MLS. Nostr is control-plane.">
+          <div class="topbar">
+            <div class="kicker"><span class="pill"><span class="dot"></span> SYSTEM</span></div>
+            <div class="kicker"><span class="pill">end-to-end</span></div>
+          </div>
+          <div class="grid2">
+            <div class="card">
+              <h4>Data plane: blobs</h4>
+              <div class="diagram">
+                <div class="node"><div class="label">Broadcaster</div><div class="tag">captures chunk i</div></div>
+                <div class="arrow">AES-256-GCM encrypt (AAD binds streamId:i)</div>
+                <div class="node"><div class="label">Blossom-like blob store(s)</div><div class="tag">public ciphertext by hash</div></div>
+                <div class="arrow">anyone can fetch ciphertext</div>
+                <div class="node"><div class="label">Viewer</div><div class="tag">fetches by hash</div></div>
+              </div>
+            </div>
+            <div class="card">
+              <h4>Control plane: Nostr + group keys</h4>
+              <div class="diagram">
+                <div class="node"><div class="label">Nostr events</div><div class="tag">announce {streamId,i,hash,mime}</div></div>
+                <div class="arrow">real NIP-17</div>
+                <div class="node"><div class="label">Admin</div><div class="tag">MLS controller (adds/removes)</div></div>
+                <div class="arrow">MLS app messages</div>
+                <div class="node"><div class="label">Authorized viewers</div><div class="tag">decrypt keys / signals</div></div>
+              </div>
+              <div class="note" style="margin-top:10px;">Blossom can be replicated; Nostr relays can be redundant; MLS scales key delivery beyond O(N).</div>
+            </div>
+          </div>
+          <div class="footer">
+            <div>Slide 3</div>
+            <div class="mono">data plane vs control plane</div>
+          </div>
+        </section>
+
+        <!-- Slide 4 -->
+        <section class="slide" data-title="Why not WebRTC" data-notes="Contrast with HiveTalk SFU. WebRTC is interactive and low-latency but centralized. Fire is distribution fabric, not an SFU.">
+          <div class="topbar">
+            <div class="kicker"><span class="pill"><span class="dot"></span> DIFFERENCE</span></div>
+            <div class="kicker"><span class="pill">vs HiveTalk (SFU/WebRTC)</span></div>
+          </div>
+          <div class="compare">
+            <div class="card col">
+              <h4>HiveTalk / SFU model</h4>
+              <ul>
+                <li><b>Authentication</b>: server/session-gated (JWT/OIDC/password/lobby).</li>
+                <li><b>Availability</b>: SFU is the distribution chokepoint.</li>
+                <li><b>Media</b>: true real-time, bi-directional, sub-second latency.</li>
+                <li><b>Trust</b>: unless E2EE-on-top, service path can observe media.</li>
+              </ul>
+            </div>
+            <div class="card strong col">
+              <h4>Fire / blob + crypto model</h4>
+              <ul>
+                <li><b>Authentication</b>: key-gated (MLS membership + NIP-17 control-plane).</li>
+                <li><b>Availability</b>: ciphertext blobs can be mirrored across hosts.</li>
+                <li><b>Media</b>: near-live; segmented under the hood (MSE append).</li>
+                <li><b>Trust</b>: blob/CDN/relay can be untrusted — sees ciphertext only.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="footer">
+            <div>Slide 4</div>
+            <div class="mono">Fire is not an SFU — it’s a resilient distribution primitive</div>
+          </div>
+        </section>
+
+        <!-- Slide 5 -->
+        <section class="slide" data-title="Use Cases" data-notes="Three strong use cases. Tie each to A/B/C. Keep crisp. Reveal steps if presenting live.">
+          <div class="topbar">
+            <div class="kicker"><span class="pill"><span class="dot"></span> USE CASES</span></div>
+            <div class="kicker"><span class="pill">A + B + C</span></div>
+          </div>
+          <div class="card">
+            <h4>Three strong use cases</h4>
+            <div class="reveal" id="reveal-uc" data-step="3">
+              <div class="node">
+                <div>
+                  <div class="label">1) Membership broadcast that’s hard to kill</div>
+                  <div class="tag">Mirror ciphertext everywhere; only subscribers decrypt</div>
+                </div>
+                <div class="tag">A • B • C</div>
+              </div>
+              <div class="node">
+                <div>
+                  <div class="label">2) Field capture with selective disclosure</div>
+                  <div class="tag">Publish durable encrypted footage; grant access later</div>
+                </div>
+                <div class="tag">A • B • C</div>
+              </div>
+              <div class="node">
+                <div>
+                  <div class="label">3) Encrypted public “dropbox” for teams</div>
+                  <div class="tag">Untrusted hosting + cryptographic access control</div>
+                </div>
+                <div class="tag">A • B • C</div>
+              </div>
+              <div class="callout"><strong>Common pattern:</strong> bytes are public and replicated; meaning is private and permissioned.</div>
+            </div>
+          </div>
+          <div class="footer">
+            <div>Slide 5</div>
+            <div class="mono">use cases that need resilience + privacy simultaneously</div>
+          </div>
+        </section>
+
+        <!-- Slide 6 -->
+        <section class="slide" data-title="How it works" data-notes="Show concrete mechanisms: AAD binding, MLS keys, NIP-17 handshake. Mention forward-only revocation and resync.">
+          <div class="topbar">
+            <div class="kicker"><span class="pill"><span class="dot"></span> MECHANICS</span></div>
+            <div class="kicker"><span class="pill">what makes it real</span></div>
+          </div>
+          <div class="grid2">
+            <div class="card">
+              <h4>Integrity + confidentiality</h4>
+              <ul>
+                <li><b>AES-256-GCM</b> per chunk.</li>
+                <li><b>AAD fixed-size</b>: <span class="mono">SHA-256( streamId + ":" + chunkId )</span>.</li>
+                <li>Prevents ciphertext swapping across streams/indices.</li>
+              </ul>
+              <div class="note" style="margin-top:10px;">The blob host can serve bytes, but can’t forge valid plaintext without keys.</div>
+            </div>
+            <div class="card strong">
+              <h4>Authorization at scale</h4>
+              <ul>
+                <li><b>Admin is MLS controller</b>: add/remove members.</li>
+                <li><b>NIP-17</b> carries join/welcome/commit control-plane messages.</li>
+                <li>Ongoing delivery uses <b>MLS application messages</b> (one publish per key payload).</li>
+                <li><b>Revocation is forward-only</b>: stop decrypting future chunks after removal.</li>
+              </ul>
+              <div class="note" style="margin-top:10px;">If a viewer desyncs (missed commit), they request resync → admin re-welcome.</div>
+            </div>
+          </div>
+          <div class="footer">
+            <div>Slide 6</div>
+            <div class="mono">cryptography replaces centralized ACLs</div>
+          </div>
+        </section>
+
+        <!-- Slide 7 -->
+        <section class="slide" data-title="What it enables" data-notes="End with crisp promise and next steps. Mention multi-host fetch fallback, multi-relay, MLS+NIP-17 completion.">
+          <div class="topbar">
+            <div class="kicker"><span class="pill"><span class="dot"></span> CLOSE</span></div>
+            <div class="kicker"><span class="pill">what we’re building</span></div>
+          </div>
+          <div>
+            <h2>Make the network carry ciphertext.<br/><span class="titleGlow">Make permissions travel as keys.</span></h2>
+            <p class="lead">Fire is a resilient media primitive: it degrades gracefully under outages, survives hosting churn, and keeps meaning private — because the hosting layer never needs to be trusted.</p>
+          </div>
+          <div class="grid2">
+            <div class="card">
+              <h4>Immediate next steps</h4>
+              <ul>
+                <li>Implement <b>real NIP-17</b> (replace kind4/NIP44 shim).</li>
+                <li>Implement MLS join/welcome/commit via Rust→WASM.</li>
+                <li>Publish MLS app messages; viewer decrypt + MSE append.</li>
+              </ul>
+            </div>
+            <div class="card strong">
+              <h4>Resilience knobs</h4>
+              <div class="metric">
+                <div class="stat"><div class="n">multi-blob</div><div class="k">fetch fallback / bouquet replication</div></div>
+                <div class="stat"><div class="n">multi-relay</div><div class="k">control-plane redundancy</div></div>
+                <div class="stat"><div class="n">crypto-first</div><div class="k">untrusted hosts by default</div></div>
+              </div>
+            </div>
+          </div>
+          <div class="footer">
+            <div>Slide 7</div>
+            <div class="mono">Blossom Fire — Public ciphertext, private access</div>
+          </div>
+        </section>
+
+      </div>
+
+      <div class="notes" id="notes"></div>
+      <div class="corner" id="corner">Blossom Fire</div>
+      <div class="progress"><div id="bar"></div></div>
+      <div class="hud" id="hud">
+        <span id="counter">1 / 7</span>
+        <span>•</span>
+        <span><kbd>←</kbd><kbd>→</kbd> <kbd>Space</kbd></span>
+        <span>•</span>
+        <span><kbd>N</kbd> notes</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      const slides = Array.from(document.querySelectorAll('.slide'));
+      const bar = document.getElementById('bar');
+      const counter = document.getElementById('counter');
+      const notesEl = document.getElementById('notes');
+
+      let idx = 0;
+      let notesOn = false;
+
+      function setActive(i){
+        idx = Math.max(0, Math.min(slides.length-1, i));
+        slides.forEach((s, j) => s.classList.toggle('active', j === idx));
+        const pct = ((idx+1)/slides.length) * 100;
+        bar.style.width = pct.toFixed(2) + '%';
+        counter.textContent = `${idx+1} / ${slides.length}`;
+        updateNotes();
+        // reset reveal steps on slide change
+        document.querySelectorAll('.reveal').forEach(el => el.dataset.step = el.dataset.step || '3');
+      }
+
+      function updateNotes(){
+        const s = slides[idx];
+        const text = s.getAttribute('data-notes') || '';
+        notesEl.textContent = text;
+        notesEl.classList.toggle('show', notesOn && text.trim().length > 0);
+      }
+
+      function next(){ setActive(idx+1); }
+      function prev(){ setActive(idx-1); }
+
+      function toggleNotes(){
+        notesOn = !notesOn;
+        updateNotes();
+      }
+
+      function bumpReveal(dir){
+        const r = slides[idx].querySelector('.reveal');
+        if(!r) return false;
+        const step = parseInt(r.dataset.step || '3', 10);
+        const nextStep = Math.max(0, Math.min(3, step + dir));
+        if(nextStep === step) return false;
+        r.dataset.step = String(nextStep);
+        return true;
+      }
+
+      window.addEventListener('keydown', (e) => {
+        if(e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown'){
+          e.preventDefault();
+          if(!bumpReveal(+1)) next();
+        } else if(e.key === 'ArrowLeft' || e.key === 'PageUp'){
+          e.preventDefault();
+          if(!bumpReveal(-1)) prev();
+        } else if(e.key.toLowerCase() === 'n'){
+          e.preventDefault();
+          toggleNotes();
+        } else if(e.key.toLowerCase() === 'home'){
+          e.preventDefault();
+          setActive(0);
+        } else if(e.key.toLowerCase() === 'end'){
+          e.preventDefault();
+          setActive(slides.length-1);
+        }
+      }, {passive:false});
+
+      // Touch swipe
+      let touchStartX = null;
+      let touchStartY = null;
+      window.addEventListener('touchstart', (e) => {
+        const t = e.touches && e.touches[0];
+        if(!t) return;
+        touchStartX = t.clientX;
+        touchStartY = t.clientY;
+      }, {passive:true});
+      window.addEventListener('touchend', (e) => {
+        const t = e.changedTouches && e.changedTouches[0];
+        if(!t || touchStartX === null) return;
+        const dx = t.clientX - touchStartX;
+        const dy = t.clientY - touchStartY;
+        const ax = Math.abs(dx);
+        const ay = Math.abs(dy);
+        if(ax > 40 && ax > ay){
+          if(dx < 0){ if(!bumpReveal(+1)) next(); }
+          else { if(!bumpReveal(-1)) prev(); }
+        }
+        touchStartX = null;
+        touchStartY = null;
+      }, {passive:true});
+
+      // init
+      setActive(0);
+    })();
+  </script>
+</body>
+</html>

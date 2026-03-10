@@ -38,10 +38,12 @@
     </div>
 
     <script type="module">
-      import { TAG_DEMO, TAG_ADMINKEY, ADMIN_SK_HEX } from './config.js';
+      import { TAG_DEMO, TAG_REQ } from './config.js';
       import { blobUpload } from './blob.js';
-      import { aesGcmEncrypt, randKey32, utf8Bytes, b64encode, sha256Bytes } from './crypto.js';
-      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, nip44Encrypt, skFromHex, pubkeyFromSk, npubFromPubkey } from './util.js';
+      import { aesGcmEncrypt, utf8Bytes, sha256Bytes, b64encode } from './crypto.js';
+      import { deriveChunkKey } from './deriveChunkKey.js';
+      import { createMember } from './mls.js';
+      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, sub, nip44Decrypt } from './util.js';
 
       const streamId = getStreamId();
       document.querySelector('#stream').textContent = streamId;
@@ -49,10 +51,6 @@
       // Broadcaster identity (stored locally)
       const broadcaster = getOrCreateViewerKeypair('demo.broadcaster.sk');
       document.querySelector('#npub').textContent = broadcaster.npub;
-
-      // Admin identity is hardcoded for now (same across admin/broadcast)
-      const adminSk = skFromHex(ADMIN_SK_HEX);
-      const adminPub = pubkeyFromSk(adminSk);
 
       const statusEl = document.querySelector('#status');
       const vid = document.querySelector('#vid');
@@ -66,7 +64,60 @@
       let timer = null;
       let mediaStream = null;
 
+      // MLS state
+      const { member: mls, kind: mlsKind, persist: persistMls } = await createMember(
+        `${streamId}:broadcaster`,
+        `mls.member.broadcaster.${streamId}`
+      );
+      let exporterSecretB64 = null;
+
       function setStatus(s) { statusEl.textContent = s; }
+
+      async function refreshExporterSecret() {
+        try {
+          // context is streamId bytes
+          const ctxB64 = b64encode(utf8Bytes(streamId));
+          exporterSecretB64 = mls.export_secret('blossom-fire-demo', ctxB64, 32);
+          persistMls();
+          setStatus(`MLS ready (${mlsKind}) epoch=${mls.group_epoch()}`);
+        } catch {
+          exporterSecretB64 = null;
+        }
+      }
+
+      // Join-request (public) so admin can Welcome us.
+      try {
+        const kp = mls.create_key_package();
+        const req = makeSignedEventUnsigned(1, broadcaster.sk, {
+          content: JSON.stringify({ t: 'mls_join', role: 'broadcaster', kp, v: 1 }),
+          tags: [ ['t', TAG_REQ], ['d', streamId] ]
+        });
+        await publish(req);
+      } catch (e) {
+        console.warn('mls join request failed', e);
+      }
+
+      // Listen for MLS welcome/commit DMs.
+      sub([
+        { kinds: [4], '#p': [broadcaster.pk], '#d': [streamId], limit: 200 }
+      ], async (ev) => {
+        try {
+          const plaintext = nip44Decrypt(broadcaster.sk, ev.pubkey, ev.content);
+          const msg = JSON.parse(plaintext);
+          if (msg.streamId !== streamId) return;
+          if (msg.type === 'mls_welcome') {
+            mls.process_welcome(msg.welcome, msg.commit);
+            await refreshExporterSecret();
+          } else if (msg.type === 'mls_commit') {
+            mls.process_commit(msg.commit);
+            await refreshExporterSecret();
+          }
+        } catch {
+          // ignore
+        }
+      });
+
+      await refreshExporterSecret();
 
       async function setupCamera() {
         mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
@@ -88,11 +139,15 @@
       async function tick() {
         if (!running) return;
         try {
-          const plaintext = await captureToCanvas();
-          const key = randKey32();
+          if (!exporterSecretB64) {
+            setStatus('waiting for MLS welcome/commit from admin…');
+            return;
+          }
 
-          // Some WebCrypto implementations are picky about AAD length.
-          // Use fixed 32-byte AAD = SHA-256(streamId:frameId)
+          const plaintext = await captureToCanvas();
+          const key = await deriveChunkKey(exporterSecretB64, streamId, frameId);
+
+          // fixed 32-byte AAD = SHA-256(streamId:frameId)
           const aad = await sha256Bytes(utf8Bytes(`${streamId}:${frameId}`));
           const { iv, ciphertext } = await aesGcmEncrypt(key, plaintext, { aadBytes: aad });
 
@@ -112,20 +167,12 @@
               ['i', String(frameId)],
               ['x', hash],
               ['m', 'image/webp'],
+              ['e', String(mls.group_epoch())],
             ]
           });
           await publish(ann);
 
-          // send key to admin via NIP-44 DM (kind 4)
-          const keyMsg = JSON.stringify({ streamId, frameId, x: hash, k: b64encode(key), m: 'image/webp', alg: 'aes-gcm', v: 1 });
-          const enc = nip44Encrypt(broadcaster.sk, adminPub, keyMsg);
-          const dm = makeSignedEventUnsigned(4, broadcaster.sk, {
-            content: enc,
-            tags: [ ['p', adminPub], ['t', TAG_ADMINKEY], ['d', streamId], ['i', String(frameId)] ]
-          });
-          await publish(dm);
-
-          setStatus(`sent frame ${frameId} → ${hash.slice(0, 8)}…`);
+          setStatus(`sent frame ${frameId} (epoch ${mls.group_epoch()}) → ${hash.slice(0, 8)}…`);
           frameId++;
         } catch (e) {
           console.error(e);
@@ -158,7 +205,7 @@
         setStatus('stopped');
       };
 
-      setStatus('ready');
+      setStatus(`ready (MLS=${mlsKind}; epoch=${mls.group_epoch()})`);
     </script>
   </body>
 </html>

@@ -51,9 +51,11 @@
     </div>
 
     <script type="module">
-      import { TAG_REQ, TAG_ADMINKEY, ADMIN_SK_HEX } from './config.js';
+      import { TAG_REQ, TAG_DEMO, ADMIN_SK_HEX } from './config.js';
       import { blobFetch } from './blob.js';
-      import { aesGcmDecrypt, b64decode, utf8Bytes, sha256Bytes } from './crypto.js';
+      import { aesGcmDecrypt, utf8Bytes, sha256Bytes, b64encode } from './crypto.js';
+      import { deriveChunkKey } from './deriveChunkKey.js';
+      import { createAdmin } from './mls.js';
       import {
         getStreamId,
         skFromHex,
@@ -62,7 +64,6 @@
         makeSignedEventUnsigned,
         publish,
         sub,
-        nip44Decrypt,
         nip44Encrypt,
       } from './util.js';
 
@@ -78,27 +79,30 @@
       const previewEl = document.querySelector('#preview');
       const previewVideoToggle = document.querySelector('#previewVideo');
       const previewVidEl = document.querySelector('#previewVid');
+      previewVideoToggle.disabled = true; // video path not wired for MLS yet
+      previewVidEl.style.display = 'none';
 
-      // viewerPubkeyHex -> { allowed, lastSeen, npub }
+      const { admin: mlsAdmin, kind: mlsKind, persist: persistAdmin } = await createAdmin(
+        streamId,
+        `mls.admin.${streamId}`
+      );
+
+      let exporterSecretB64 = null;
+      function refreshExporterSecret() {
+        try {
+          const ctxB64 = b64encode(utf8Bytes(streamId));
+          exporterSecretB64 = mlsAdmin.export_secret('blossom-fire-demo', ctxB64, 32);
+          persistAdmin();
+        } catch {
+          exporterSecretB64 = null;
+        }
+      }
+
+      // viewerPubkeyHex -> { allowed, lastSeen, npub, kp, role, joined }
       const viewers = new Map();
 
-      // frameId -> { keyBytes, blobHash, mime, codec }
-      const adminFrameKeys = new Map();
-
-      // Video preview (MSE) state
-      const videoKeys = new Map();      // chunkId -> { keyBytes, blobHash, mime, codec }
-      const videoDecrypted = new Map(); // chunkId -> Uint8Array
-      let videoLastAppended = -1;
-      let mediaSource = null;
-      let sourceBuffer = null;
-      let videoCodec = null;
-
-      let pumpVideoInner = () => {};
-      function pumpVideo() {
-        if (!previewVideoToggle.checked) return;
-        if (!sourceBuffer) return;
-        pumpVideoInner();
-      }
+      // frameId -> { blobHash, mime }
+      const announced = new Map();
 
       function setStatus(s) { statusEl.textContent = s; }
 
@@ -112,7 +116,10 @@
           row.className = 'viewer';
 
           const left = document.createElement('div');
-          left.innerHTML = `<div><code>${v.npub}</code></div><div class="small">last: ${new Date((v.lastSeen||0)*1000).toLocaleTimeString()}</div>`;
+          const extra = v.role ? ` (${v.role})` : '';
+          const joined = v.joined ? 'joined' : 'not joined';
+          const hasKp = v.kp ? 'kp' : 'no-kp';
+          left.innerHTML = `<div><code>${v.npub}</code>${extra}</div><div class="small">${joined} · ${hasKp} · last: ${new Date((v.lastSeen||0)*1000).toLocaleTimeString()}</div>`;
 
           const right = document.createElement('div');
           right.className = 'row';
@@ -120,10 +127,14 @@
           const cb = document.createElement('input');
           cb.type = 'checkbox';
           cb.checked = !!v.allowed;
-          cb.onchange = () => {
+          cb.onchange = async () => {
             v.allowed = cb.checked;
             v.lastSeen = Math.floor(Date.now()/1000);
             viewers.set(pub, v);
+            renderViewers();
+            if (v.allowed && !v.joined) {
+              await tryWelcome(pub);
+            }
           };
 
           right.appendChild(document.createTextNode('allow '));
@@ -140,8 +151,48 @@
         renderViewers();
       };
 
-      // Subscribe to access requests (public)
-      // Some relays are finicky about multi-tag queries; keep the filter minimal.
+      async function dm(toPub, payloadObj) {
+        const enc = nip44Encrypt(adminSk, toPub, JSON.stringify(payloadObj));
+        const ev = makeSignedEventUnsigned(4, adminSk, {
+          content: enc,
+          tags: [ ['p', toPub], ['d', streamId] ]
+        });
+        await publish(ev);
+      }
+
+      async function tryWelcome(pub) {
+        const v = viewers.get(pub);
+        if (!v?.kp) {
+          setStatus('cannot add member: missing key package (reload viewer/broadcast and try again)');
+          return;
+        }
+        try {
+          const outJson = mlsAdmin.add_member(v.kp);
+          const out = JSON.parse(outJson);
+          persistAdmin();
+          refreshExporterSecret();
+
+          // Send Welcome+Commit to the new member.
+          await dm(pub, { type: 'mls_welcome', streamId, welcome: out.welcome, commit: out.commit, epoch: out.epoch, v: 1 });
+
+          // Send Commit to all existing allowed members (so they advance epoch).
+          for (const [p, rec] of viewers.entries()) {
+            if (!rec.allowed) continue;
+            if (p === pub) continue;
+            await dm(p, { type: 'mls_commit', streamId, commit: out.commit, epoch: out.epoch, v: 1 });
+          }
+
+          v.joined = true;
+          viewers.set(pub, v);
+          renderViewers();
+          setStatus(`added member ${v.npub}; MLS epoch=${mlsAdmin.group_epoch()} (${mlsKind})`);
+        } catch (e) {
+          console.error(e);
+          setStatus(`add_member error: ${e.message || e}`);
+        }
+      }
+
+      // Subscribe to public access/join requests
       sub([
         {
           kinds: [1],
@@ -149,189 +200,63 @@
           limit: 200,
         }
       ], (ev) => {
-        // Only handle this streamId
         const d = ev.tags.find(t => t[0] === 'd');
         if (!d || d[1] !== streamId) return;
         const pub = ev.pubkey;
-        if (!viewers.has(pub)) {
-          viewers.set(pub, { allowed: false, lastSeen: ev.created_at, npub: npubFromPubkey(pub) });
-          renderViewers();
-        } else {
-          const v = viewers.get(pub);
-          v.lastSeen = ev.created_at;
-          viewers.set(pub, v);
-          renderViewers();
-        }
+
+        let kp = null;
+        let role = null;
+        try {
+          const c = JSON.parse(ev.content || '{}');
+          if (c?.t === 'mls_join') {
+            kp = c.kp || null;
+            role = c.role || null;
+          }
+        } catch {}
+
+        const existing = viewers.get(pub) || { allowed: false, joined: false, npub: npubFromPubkey(pub) };
+        viewers.set(pub, {
+          ...existing,
+          lastSeen: ev.created_at,
+          kp: kp || existing.kp,
+          role: role || existing.role,
+        });
+        renderViewers();
       });
 
-      // Subscribe to broadcaster→admin key DMs (kind 4)
-      // Keep filter minimal: kind 4 + our pubkey. We'll inspect tags/content client-side.
+      // Subscribe to frame announcements + decrypt for preview using MLS exporter
       sub([
-        {
-          kinds: [4],
-          '#p': [adminPub],
-          limit: 200,
-        }
+        { kinds: [1], '#t': [TAG_DEMO], '#d': [streamId], limit: 100 }
       ], async (ev) => {
         try {
-          // decrypt with sender pubkey
-          const plaintext = nip44Decrypt(adminSk, ev.pubkey, ev.content);
-          const msg = JSON.parse(plaintext);
-          if (msg.streamId !== streamId) return;
-          // Optional tag check (best-effort)
-          const tTag = ev.tags.find(t => t[0]==='t');
-          if (tTag && tTag[1] !== TAG_ADMINKEY) {
-            // If tag present and not ours, ignore
-            return;
-          }
+          const frameIdTag = ev.tags.find(t => t[0]==='i');
+          const blobTag = ev.tags.find(t => t[0]==='x');
+          const mimeTag = ev.tags.find(t => t[0]==='m');
+          if (!frameIdTag || !blobTag) return;
+          const frameId = Number(frameIdTag[1]);
+          const blobHash = blobTag[1];
+          const mime = (mimeTag && mimeTag[1]) || 'image/webp';
+          announced.set(frameId, { blobHash, mime });
 
-          const frameId = Number(msg.frameId);
-          const blobHash = msg.x;
-          const keyBytes = b64decode(msg.k);
-          const mime = msg.m || 'application/octet-stream';
-          const codec = msg.c || mime;
+          if (!exporterSecretB64) refreshExporterSecret();
+          if (!exporterSecretB64) return;
 
-          adminFrameKeys.set(frameId, { keyBytes, blobHash, mime, codec });
-
-          // If it's video and preview is enabled, decrypt+append via MSE
-          if (mime.startsWith('video/')) {
-            videoKeys.set(frameId, { keyBytes, blobHash, mime, codec });
-            if (previewVideoToggle.checked) {
-              // ensure MSE starts with the right codec
-              ensureVideoMse(codec);
-              await tryDecryptVideoChunk(frameId);
-            }
-          }
-
-          // Image preview (best-effort)
-          await tryRenderPreview(frameId);
-
-          // Forward key to allowed viewers
-          for (const [viewerPub, v] of viewers.entries()) {
-            if (!v.allowed) continue;
-            const payload = JSON.stringify({ streamId, frameId, x: blobHash, k: msg.k, m: mime, alg: msg.alg || 'aes-gcm', v: 1 });
-            const enc = nip44Encrypt(adminSk, viewerPub, payload);
-            const dm = makeSignedEventUnsigned(4, adminSk, {
-              content: enc,
-              tags: [ ['p', viewerPub], ['d', streamId], ['i', String(frameId)] ]
-            });
-            publish(dm); // don't await each
-          }
-
-          setStatus(`got key for frame ${frameId} from ${npubFromPubkey(ev.pubkey)}`);
+          const payload = await blobFetch(blobHash);
+          const iv = payload.slice(0, 12);
+          const ct = payload.slice(12);
+          const aad = await sha256Bytes(utf8Bytes(`${streamId}:${frameId}`));
+          const key = await deriveChunkKey(exporterSecretB64, streamId, frameId);
+          const pt = await aesGcmDecrypt(key, iv, ct, { aadBytes: aad });
+          const blob = new Blob([pt], { type: mime });
+          previewEl.src = URL.createObjectURL(blob);
+          setStatus(`preview frame ${frameId} (MLS epoch=${mlsAdmin.group_epoch()} ${mlsKind})`);
         } catch (e) {
-          console.error(e);
-          setStatus(`error decrypting adminkey dm: ${e.message || e}`);
+          // epoch mismatch or not joined broadcaster yet
         }
       });
 
-      function resetVideoPreview() {
-        // Drop MSE pipeline so we can recreate cleanly
-        mediaSource = null;
-        sourceBuffer = null;
-        videoCodec = null;
-        videoDecrypted.clear();
-        videoKeys.clear();
-        videoLastAppended = -1;
-        try { previewVidEl.pause(); } catch {}
-        previewVidEl.removeAttribute('src');
-        previewVidEl.load();
-      }
-
-      function ensureVideoMse(codec) {
-        if (mediaSource) return;
-        if (!('MediaSource' in window)) {
-          setStatus('error: MediaSource not supported in this browser');
-          return;
-        }
-        videoCodec = codec || 'video/webm;codecs=vp8,opus';
-        if (!MediaSource.isTypeSupported(videoCodec)) {
-          setStatus(`error: codec not supported: ${videoCodec}`);
-          return;
-        }
-
-        mediaSource = new MediaSource();
-        previewVidEl.src = URL.createObjectURL(mediaSource);
-        mediaSource.addEventListener('sourceopen', () => {
-          try {
-            sourceBuffer = mediaSource.addSourceBuffer(videoCodec);
-            sourceBuffer.mode = 'sequence';
-            pumpVideoInner = createPump({
-              sourceBuffer,
-              decrypted: videoDecrypted,
-              getLastAppended: () => videoLastAppended,
-              setLastAppended: (n) => { videoLastAppended = n; },
-              onStatus: setStatus,
-            });
-            sourceBuffer.addEventListener('updateend', pumpVideo);
-            sourceBuffer.addEventListener('error', (e) => {
-              console.error('admin sourceBuffer error', e);
-              setStatus('admin video sourceBuffer error (see console)');
-            });
-            pumpVideo();
-          } catch (e) {
-            console.error(e);
-            setStatus(`admin: error creating SourceBuffer: ${e.message || e}`);
-          }
-        }, { once: true });
-      }
-
-      // `pumpVideo()` is defined near the top and uses the shared MSE pump.
-
-      async function tryDecryptVideoChunk(chunkId) {
-        if (!previewVideoToggle.checked) return;
-        if (videoDecrypted.has(chunkId)) return;
-        const rec = videoKeys.get(chunkId);
-        if (!rec) return;
-
-        ensureVideoMse(rec.codec || rec.mime);
-        if (!sourceBuffer) return; // wait for sourceopen
-
-        try {
-          const payload = await blobFetch(rec.blobHash);
-          const iv = payload.slice(0, 12);
-          const ct = payload.slice(12);
-          const aad = await sha256Bytes(utf8Bytes(`${streamId}:${chunkId}`));
-          const pt = await aesGcmDecrypt(rec.keyBytes, iv, ct, { aadBytes: aad });
-          videoDecrypted.set(chunkId, pt);
-          pumpVideo();
-        } catch (e) {
-          console.warn('admin video decrypt failed', e);
-        }
-      }
-
-      async function tryRenderPreview(frameId) {
-        const rec = adminFrameKeys.get(frameId);
-        if (!rec) return;
-
-        // image preview
-        if (rec.mime && rec.mime.startsWith('image/')) {
-          try {
-            const payload = await blobFetch(rec.blobHash);
-            const iv = payload.slice(0, 12);
-            const ct = payload.slice(12);
-            const aad = await sha256Bytes(utf8Bytes(`${streamId}:${frameId}`));
-            const pt = await aesGcmDecrypt(rec.keyBytes, iv, ct, { aadBytes: aad });
-            const blob = new Blob([pt], { type: rec.mime });
-            previewEl.src = URL.createObjectURL(blob);
-          } catch (e) {
-            console.warn('preview decrypt failed', e);
-          }
-        }
-
-        // video preview is handled separately via videoKeys/videoDecrypted
-      }
-
-      // Toggle UI
-      previewVideoToggle.onchange = () => {
-        const on = previewVideoToggle.checked;
-        previewVidEl.style.display = on ? '' : 'none';
-        if (!on) {
-          resetVideoPreview();
-        }
-      };
-
-      setStatus('ready');
+      refreshExporterSecret();
+      setStatus(`ready (MLS=${mlsKind} epoch=${mlsAdmin.group_epoch()})`);
     </script>
   </body>
 </html>

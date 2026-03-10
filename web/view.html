@@ -26,7 +26,9 @@
     <script type="module">
       import { TAG_REQ, TAG_DEMO } from './config.js';
       import { blobFetch } from './blob.js';
-      import { aesGcmDecrypt, b64decode, utf8Bytes, sha256Bytes } from './crypto.js';
+      import { aesGcmDecrypt, b64decode, utf8Bytes, sha256Bytes, b64encode } from './crypto.js';
+      import { deriveChunkKey } from './deriveChunkKey.js';
+      import { createMember } from './mls.js';
       import {
         getStreamId,
         getOrCreateViewerKeypair,
@@ -45,20 +47,43 @@
       const statusEl = document.querySelector('#status');
       const imgEl = document.querySelector('#img');
 
-      // frameId -> { keyB64, blobHash, mime }
-      const keys = new Map();
-      // frameId -> blobHash (announced)
+      // MLS state
+      const { member: mls, kind: mlsKind, persist: persistMls } = await createMember(
+        `${streamId}:viewer:${viewer.pk}`,
+        `mls.member.viewer.${streamId}.${viewer.pk}`
+      );
+      let exporterSecretB64 = null;
+
+      // frameId -> { blobHash, mime }
       const announced = new Map();
+      // legacy frameId -> keyB64 (fallback/dummy)
+      const legacyKeys = new Map();
 
       function setStatus(s) { statusEl.textContent = s; }
 
-      // Auto-request access
-      const req = makeSignedEventUnsigned(1, viewer.sk, {
-        content: 'request',
-        tags: [ ['t', TAG_REQ], ['d', streamId] ]
-      });
-      await publish(req);
-      setStatus('requested access; waiting for keys…');
+      async function refreshExporterSecret() {
+        try {
+          const ctxB64 = b64encode(utf8Bytes(streamId));
+          exporterSecretB64 = mls.export_secret('blossom-fire-demo', ctxB64, 32);
+          persistMls();
+          setStatus(`MLS ready (${mlsKind}) epoch=${mls.group_epoch()}`);
+        } catch {
+          exporterSecretB64 = null;
+        }
+      }
+
+      // Auto-request access (public join request)
+      try {
+        const kp = mls.create_key_package();
+        const req = makeSignedEventUnsigned(1, viewer.sk, {
+          content: JSON.stringify({ t: 'mls_join', role: 'viewer', kp, v: 1 }),
+          tags: [ ['t', TAG_REQ], ['d', streamId] ]
+        });
+        await publish(req);
+      } catch (e) {
+        console.warn('mls join request failed', e);
+      }
+      setStatus('requested access; waiting for MLS welcome…');
 
       // Subscribe to frame announcements
       sub([
@@ -81,7 +106,7 @@
         }
       });
 
-      // Subscribe to DMs addressed to this viewer (keys)
+      // Subscribe to DMs addressed to this viewer (MLS + legacy keys)
       sub([
         { kinds: [4], '#p': [viewer.pk], '#d': [streamId], limit: 200 }
       ], async (ev) => {
@@ -90,34 +115,48 @@
           const msg = JSON.parse(plaintext);
           if (msg.streamId !== streamId) return;
 
-          keys.set(Number(msg.frameId), { keyB64: msg.k, blobHash: msg.x, mime: msg.m || 'image/webp' });
-          setStatus(`allowed; got key for frame ${msg.frameId}`);
-          await tryRender(Number(msg.frameId));
-        } catch (e) {
-          // likely not decryptable
+          if (msg.type === 'mls_welcome') {
+            mls.process_welcome(msg.welcome, msg.commit);
+            await refreshExporterSecret();
+          } else if (msg.type === 'mls_commit') {
+            mls.process_commit(msg.commit);
+            await refreshExporterSecret();
+          } else if (msg.k && msg.frameId != null) {
+            // legacy per-frame key
+            legacyKeys.set(Number(msg.frameId), msg.k);
+            await tryRender(Number(msg.frameId));
+          }
+        } catch {
+          // ignore
         }
       });
 
+      await refreshExporterSecret();
+
       async function tryRender(frameId) {
-        const k = keys.get(frameId);
         const a = announced.get(frameId);
-        if (!k || !a) return;
+        if (!a) return;
 
-        const blobHash = k.blobHash || a.blobHash;
-        const mime = k.mime || a.mime;
-
-        const payload = await blobFetch(blobHash);
+        const payload = await blobFetch(a.blobHash);
         const iv = payload.slice(0, 12);
         const ct = payload.slice(12);
-        const keyBytes = b64decode(k.keyB64);
         const aad = await sha256Bytes(utf8Bytes(`${streamId}:${frameId}`));
+
+        let keyBytes = null;
+        if (exporterSecretB64) {
+          keyBytes = await deriveChunkKey(exporterSecretB64, streamId, frameId);
+        } else if (legacyKeys.has(frameId)) {
+          keyBytes = b64decode(legacyKeys.get(frameId));
+        } else {
+          return;
+        }
 
         try {
           const pt = await aesGcmDecrypt(keyBytes, iv, ct, { aadBytes: aad });
-          const blob = new Blob([pt], { type: mime });
+          const blob = new Blob([pt], { type: a.mime });
           imgEl.src = URL.createObjectURL(blob);
         } catch (e) {
-          setStatus('have blob but not allowed (or wrong key)');
+          setStatus('have blob but not allowed (or wrong epoch)');
         }
       }
 
