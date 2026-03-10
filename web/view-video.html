@@ -1,0 +1,167 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Viewer Video</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 16px; }
+      .box { padding: 12px; border: 1px solid #ddd; border-radius: 8px; }
+      code { background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }
+      .small { color: #666; font-size: 12px; }
+      video { width: 100%; max-width: 860px; border: 1px solid #ddd; border-radius: 8px; margin-top: 12px; }
+    </style>
+  </head>
+  <body>
+    <h2>Viewer (near-live video)</h2>
+    <div class="box">
+      <div>Stream: <code id="stream"></code></div>
+      <div>Your npub: <code id="npub"></code></div>
+      <div>Status: <span id="status">starting…</span></div>
+      <div class="small">Auto-generates nostr keypair and auto-requests access.</div>
+    </div>
+
+    <video id="v" controls autoplay playsinline muted></video>
+
+    <script type="module">
+      import { TAG_REQ, TAG_DEMO_VIDEO } from './config.js';
+      import { blobFetch } from './blob.js';
+      import { aesGcmDecrypt, b64decode, utf8Bytes } from './crypto.js';
+      import {
+        getStreamId,
+        getOrCreateViewerKeypair,
+        makeSignedEventUnsigned,
+        publish,
+        sub,
+        nip17UnwrapJson,
+      } from './util.js';
+
+      const streamId = getStreamId();
+      document.querySelector('#stream').textContent = streamId;
+
+      const viewer = getOrCreateViewerKeypair('demo.viewer.sk');
+      document.querySelector('#npub').textContent = viewer.npub;
+
+      const statusEl = document.querySelector('#status');
+      const videoEl = document.querySelector('#v');
+
+      const keys = new Map();      // chunkId -> { keyB64, blobHash, mime }
+      const announced = new Map(); // chunkId -> { blobHash, mime }
+      const appended = new Set();
+
+      function setStatus(s) { statusEl.textContent = s; }
+
+      // Auto-request access
+      const req = makeSignedEventUnsigned(1, viewer.sk, {
+        content: 'request-video',
+        tags: [ ['t', TAG_REQ], ['d', streamId] ]
+      });
+      await publish(req);
+      setStatus('requested access; waiting for video keys…');
+
+      // MSE setup
+      const mimeCandidates = [
+        'video/webm; codecs="vp8,opus"',
+        'video/webm; codecs="vp9,opus"',
+        'video/webm'
+      ];
+      const mseMime = mimeCandidates.find(m => MediaSource.isTypeSupported(m));
+      if (!mseMime) {
+        setStatus('error: browser does not support MSE WebM');
+      }
+
+      const ms = new MediaSource();
+      videoEl.src = URL.createObjectURL(ms);
+      let sb = null;
+      const queue = [];
+
+      ms.addEventListener('sourceopen', () => {
+        if (!mseMime) return;
+        if (sb) return;
+        sb = ms.addSourceBuffer(mseMime);
+        sb.mode = 'segments';
+        sb.addEventListener('updateend', pump);
+        pump();
+      });
+
+      function enqueue(bytes) {
+        queue.push(bytes);
+        pump();
+      }
+
+      function pump() {
+        if (!sb || sb.updating) return;
+        if (queue.length === 0) return;
+        const next = queue.shift();
+        try { sb.appendBuffer(next); } catch (e) { console.error(e); }
+      }
+
+      // Subscribe to chunk announcements
+      sub([
+        { kinds: [1], '#t': [TAG_DEMO_VIDEO], '#d': [streamId], limit: 200 }
+      ], async (ev) => {
+        try {
+          const chunkIdTag = ev.tags.find(t => t[0] === 'i');
+          const blobTag = ev.tags.find(t => t[0] === 'x');
+          const mimeTag = ev.tags.find(t => t[0] === 'm');
+          if (!chunkIdTag || !blobTag) return;
+
+          const chunkId = Number(chunkIdTag[1]);
+          const blobHash = blobTag[1];
+          const mime = (mimeTag && mimeTag[1]) || 'video/webm';
+
+          announced.set(chunkId, { blobHash, mime });
+          await tryAppend(chunkId);
+        } catch (e) {
+          console.error(e);
+        }
+      });
+
+      // Subscribe to NIP-17 key DMs
+      sub([
+        { kinds: [1059], '#p': [viewer.pk], limit: 500 }
+      ], async (ev) => {
+        try {
+          const { msg } = nip17UnwrapJson(viewer.sk, ev);
+          if (!msg || msg.type !== 'viewerkey') return;
+          if (msg.streamId !== streamId) return;
+
+          keys.set(Number(msg.frameId), {
+            keyB64: msg.k,
+            blobHash: msg.x,
+            mime: msg.m || 'video/webm'
+          });
+          setStatus(`allowed; got key for chunk ${msg.frameId}`);
+          await tryAppend(Number(msg.frameId));
+        } catch {}
+      });
+
+      async function tryAppend(chunkId) {
+        if (appended.has(chunkId)) return;
+        const k = keys.get(chunkId);
+        const a = announced.get(chunkId);
+        if (!k || !a) return;
+
+        const blobHash = k.blobHash || a.blobHash;
+        const payload = await blobFetch(blobHash);
+        const iv = payload.slice(0, 12);
+        const ct = payload.slice(12);
+        const keyBytes = b64decode(k.keyB64);
+        const aad = utf8Bytes(`${streamId}:${chunkId}`);
+
+        try {
+          const pt = await aesGcmDecrypt(keyBytes, iv, ct, { aadBytes: aad });
+          enqueue(pt);
+          appended.add(chunkId);
+          if (videoEl.paused) {
+            try { await videoEl.play(); } catch {}
+          }
+        } catch {
+          setStatus('have blob but not allowed (or wrong key)');
+        }
+      }
+
+      setStatus('requested access; waiting…');
+    </script>
+  </body>
+</html>

@@ -1,0 +1,215 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Broadcast Video</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 16px; }
+      .row { display: flex; gap: 16px; flex-wrap: wrap; }
+      video { max-width: 520px; width: 100%; border: 1px solid #ddd; border-radius: 8px; }
+      input, button { font-size: 16px; }
+      .box { padding: 12px; border: 1px solid #ddd; border-radius: 8px; }
+      code { background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }
+      .small { color: #666; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h2>Broadcast (near-live video chunks → encrypted)</h2>
+
+    <div class="box">
+      <div>Stream: <code id="stream"></code></div>
+      <div>Broadcaster npub: <code id="npub"></code></div>
+      <div>Status: <span id="status">idle</span></div>
+      <div class="small" id="mime"></div>
+      <div style="margin-top:10px;">
+        <label>Chunk ms: <input id="ms" type="number" value="1000" min="250" step="250" style="width:100px;"></label>
+        <button id="start">Start</button>
+        <button id="stop" disabled>Stop</button>
+      </div>
+    </div>
+
+    <div class="row" style="margin-top:16px;">
+      <div>
+        <div>Camera preview</div>
+        <video id="vid" autoplay playsinline muted></video>
+      </div>
+    </div>
+
+    <script type="module">
+      import { TAG_DEMO_VIDEO, ADMIN_SK_HEX } from './config.js';
+      import { blobUpload } from './blob.js';
+      import { aesGcmEncrypt, randKey32, utf8Bytes, b64encode } from './crypto.js';
+      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, skFromHex, pubkeyFromSk, nip17WrapJson } from './util.js';
+
+      const streamId = getStreamId();
+      document.querySelector('#stream').textContent = streamId;
+
+      const broadcaster = getOrCreateViewerKeypair('demo.broadcaster.sk');
+      document.querySelector('#npub').textContent = broadcaster.npub;
+
+      const adminSk = skFromHex(ADMIN_SK_HEX);
+      const adminPub = pubkeyFromSk(adminSk);
+
+      const statusEl = document.querySelector('#status');
+      const mimeEl = document.querySelector('#mime');
+      const vid = document.querySelector('#vid');
+      const msEl = document.querySelector('#ms');
+      const startBtn = document.querySelector('#start');
+      const stopBtn = document.querySelector('#stop');
+
+      let mediaStream = null;
+      let recorder = null;
+      let chunkId = 0;
+      let running = false;
+      let chosenMime = null;
+
+      function setStatus(s) { statusEl.textContent = s; }
+
+      async function setupCamera() {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
+        vid.srcObject = mediaStream;
+        await vid.play();
+      }
+
+      function pickMime() {
+        const candidates = [
+          'video/webm;codecs=vp8,opus',
+          'video/webm;codecs=vp9,opus',
+          'video/webm',
+        ];
+        for (const m of candidates) {
+          if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+        }
+        return null;
+      }
+
+      async function handleChunk(blob) {
+        if (!running) return;
+        if (!blob || blob.size === 0) return;
+        try {
+          const buf = await blob.arrayBuffer();
+          const plaintext = new Uint8Array(buf);
+
+          const key = randKey32();
+          const aad = utf8Bytes(`${streamId}:${chunkId}`);
+          const { iv, ciphertext } = await aesGcmEncrypt(key, plaintext, { aadBytes: aad });
+
+          const payload = new Uint8Array(iv.length + ciphertext.length);
+          payload.set(iv, 0);
+          payload.set(ciphertext, iv.length);
+
+          const hash = await blobUpload(payload);
+
+          const ann = makeSignedEventUnsigned(1, broadcaster.sk, {
+            content: '',
+            tags: [
+              ['t', TAG_DEMO_VIDEO],
+              ['d', streamId],
+              ['i', String(chunkId)],
+              ['x', hash],
+              ['m', chosenMime || 'video/webm'],
+            ]
+          });
+          await publish(ann);
+
+          // send key to admin via NIP-17
+          const dm = await nip17WrapJson(broadcaster.sk, adminPub, {
+            type: 'adminkey',
+            streamId,
+            frameId: chunkId,
+            x: hash,
+            k: b64encode(key),
+            m: chosenMime || 'video/webm',
+            alg: 'aes-gcm',
+            v: 1,
+          });
+          await publish(dm);
+
+          setStatus(`sent chunk ${chunkId} → ${hash.slice(0,8)}… (${blob.size} bytes)`);
+          chunkId++;
+        } catch (e) {
+          console.error(e);
+          setStatus(`error: ${e.message || e}`);
+        }
+      }
+
+      async function recordOneChunk(ms) {
+        return new Promise((resolve, reject) => {
+          try {
+            recorder = new MediaRecorder(mediaStream, { mimeType: chosenMime });
+          } catch (e) {
+            reject(e);
+            return;
+          }
+
+          let data = null;
+          recorder.ondataavailable = (ev) => { data = ev.data; };
+          recorder.onerror = (ev) => reject(ev.error || ev);
+          recorder.onstop = () => resolve(data);
+
+          recorder.start();
+          setTimeout(() => {
+            try {
+              if (recorder && recorder.state !== 'inactive') recorder.stop();
+            } catch (e) {
+              reject(e);
+            }
+          }, ms);
+        });
+      }
+
+      async function loop() {
+        const ms = Math.max(250, Number(msEl.value || 1000));
+        while (running) {
+          try {
+            const blob = await recordOneChunk(ms);
+            await handleChunk(blob);
+          } catch (e) {
+            console.error(e);
+            setStatus(`error: ${e.message || e}`);
+            await new Promise(r => setTimeout(r, 500));
+          }
+        }
+      }
+
+      startBtn.onclick = async () => {
+        if (running) return;
+        running = true;
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+
+        setStatus('starting camera…');
+        await setupCamera();
+
+        chosenMime = pickMime();
+        if (!chosenMime) {
+          setStatus('error: no supported MediaRecorder mimeType (need WebM support)');
+          running = false;
+          startBtn.disabled = false;
+          stopBtn.disabled = true;
+          return;
+        }
+        mimeEl.textContent = `Recorder mimeType: ${chosenMime}`;
+
+        setStatus('recording');
+        loop();
+      };
+
+      stopBtn.onclick = () => {
+        running = false;
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        if (recorder && recorder.state !== 'inactive') {
+          try { recorder.stop(); } catch {}
+        }
+        recorder = null;
+        if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+        setStatus('stopped');
+      };
+
+      setStatus('ready');
+    </script>
+  </body>
+</html>

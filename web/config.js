@@ -14,5 +14,6 @@ export const BLOB_BASE = `http://${LAN_HOST}:3000`;
 export const ADMIN_SK_HEX = "1".repeat(64);
 
 export const TAG_DEMO = "blossom-fire-demo";
+export const TAG_DEMO_VIDEO = "blossom-fire-demo-video";
 export const TAG_REQ = "blossom-fire-demo-req";
 export const TAG_ADMINKEY = "blossom-fire-demo-adminkey";
