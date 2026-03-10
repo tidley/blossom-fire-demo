@@ -97,16 +97,20 @@ export function makeSignedEventUnsigned(kind, sk, { content = "", tags = [] } = 
 // nostr-tools builds may expose this as `nip17` or `nip59`.
 const giftWrap = nostrTools.nip17 || nostrTools.nip59;
 
+function toPrivkeyInput(sk) {
+  return sk instanceof Uint8Array ? bytesToHex(sk) : sk;
+}
+
 export function nip17WrapJson(senderSk, recipientPubkeyHex, payload) {
   if (!giftWrap?.wrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
   const recipient = { publicKey: recipientPubkeyHex, relays: RELAYS };
   const content = typeof payload === 'string' ? payload : JSON.stringify(payload);
-  return giftWrap.wrapEvent(senderSk, recipient, content);
+  return giftWrap.wrapEvent(toPrivkeyInput(senderSk), recipient, content);
 }
 
 export function nip17UnwrapJson(recipientSk, wrapEv) {
   if (!giftWrap?.unwrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
-  const inner = giftWrap.unwrapEvent(wrapEv, recipientSk);
+  const inner = giftWrap.unwrapEvent(wrapEv, toPrivkeyInput(recipientSk));
   let msg = null;
   try { msg = JSON.parse(inner.content || 'null'); } catch {}
   return { inner, msg };
