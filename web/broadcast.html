@@ -38,10 +38,10 @@
     </div>
 
     <script type="module">
-      import { TAG_DEMO, TAG_ADMINKEY, ADMIN_SK_HEX } from './config.js';
+      import { TAG_DEMO, ADMIN_SK_HEX } from './config.js';
       import { blobUpload } from './blob.js';
       import { aesGcmEncrypt, randKey32, utf8Bytes, b64encode } from './crypto.js';
-      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, nip44Encrypt, skFromHex, pubkeyFromSk, npubFromPubkey } from './util.js';
+      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, nip17WrapJson, skFromHex, pubkeyFromSk, npubFromPubkey } from './util.js';
 
       const streamId = getStreamId();
       document.querySelector('#stream').textContent = streamId;
@@ -114,12 +114,16 @@
           });
           await publish(ann);
 
-          // send key to admin via NIP-44 DM (kind 4)
-          const keyMsg = JSON.stringify({ streamId, frameId, x: hash, k: b64encode(key), m: 'image/webp', alg: 'aes-gcm', v: 1 });
-          const enc = nip44Encrypt(broadcaster.sk, adminPub, keyMsg);
-          const dm = makeSignedEventUnsigned(4, broadcaster.sk, {
-            content: enc,
-            tags: [ ['p', adminPub], ['t', TAG_ADMINKEY], ['d', streamId], ['i', String(frameId)] ]
+          // send key to admin via NIP-17 gift-wrap (kind 1059)
+          const dm = await nip17WrapJson(broadcaster.sk, adminPub, {
+            type: 'adminkey',
+            streamId,
+            frameId,
+            x: hash,
+            k: b64encode(key),
+            m: 'image/webp',
+            alg: 'aes-gcm',
+            v: 1,
           });
           await publish(dm);
 

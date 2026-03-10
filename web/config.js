@@ -3,6 +3,7 @@ export const LAN_HOST = location.hostname; // defaults to the current host
 
 export const RELAYS = [
   `ws://${LAN_HOST}:8080`,
+  'wss://nip17.tomdwyer.uk',
 ];
 
 export const BLOB_BASE = `http://${LAN_HOST}:3000`;

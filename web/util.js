@@ -3,8 +3,8 @@ import {
   finalizeEvent,
   generateSecretKey,
   getPublicKey,
+  nip17,
   nip19,
-  nip44,
   bytesToHex,
   hexToBytes,
 } from "https://esm.sh/nostr-tools@2.10.2";
@@ -74,10 +74,16 @@ export function makeSignedEventUnsigned(kind, sk, { content = "", tags = [] } = 
   return finalizeEvent(ev, sk);
 }
 
-export function nip44Encrypt(sk, recipientPubkeyHex, plaintext) {
-  return nip44.encrypt(sk, recipientPubkeyHex, plaintext);
+// NIP-17 gift-wrap helpers
+export function nip17WrapJson(senderSk, recipientPubkeyHex, payload) {
+  const recipient = { publicKey: recipientPubkeyHex, relays: RELAYS };
+  const content = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  return nip17.wrapEvent(senderSk, recipient, content);
 }
 
-export function nip44Decrypt(sk, senderPubkeyHex, ciphertext) {
-  return nip44.decrypt(sk, senderPubkeyHex, ciphertext);
+export function nip17UnwrapJson(recipientSk, wrapEv) {
+  const inner = nip17.unwrapEvent(wrapEv, recipientSk);
+  let msg = null;
+  try { msg = JSON.parse(inner.content || 'null'); } catch {}
+  return { inner, msg };
 }

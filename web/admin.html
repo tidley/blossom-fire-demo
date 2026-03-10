@@ -45,7 +45,7 @@
     </div>
 
     <script type="module">
-      import { TAG_REQ, TAG_ADMINKEY, ADMIN_SK_HEX } from './config.js';
+      import { TAG_REQ, ADMIN_SK_HEX } from './config.js';
       import { blobFetch } from './blob.js';
       import { aesGcmDecrypt, b64decode, utf8Bytes } from './crypto.js';
       import {
@@ -53,11 +53,10 @@
         skFromHex,
         pubkeyFromSk,
         npubFromPubkey,
-        makeSignedEventUnsigned,
         publish,
         sub,
-        nip44Decrypt,
-        nip44Encrypt,
+        nip17UnwrapJson,
+        nip17WrapJson,
       } from './util.js';
 
       const streamId = getStreamId();
@@ -138,20 +137,17 @@
         }
       });
 
-      // Subscribe to broadcaster→admin key DMs (kind 4)
+      // Subscribe to broadcaster→admin key DMs (NIP-17 gift-wrap kind 1059)
       sub([
         {
-          kinds: [4],
+          kinds: [1059],
           '#p': [adminPub],
-          '#t': [TAG_ADMINKEY],
-          '#d': [streamId],
-          limit: 200,
+          limit: 500,
         }
       ], async (ev) => {
         try {
-          // decrypt with sender pubkey
-          const plaintext = nip44Decrypt(adminSk, ev.pubkey, ev.content);
-          const msg = JSON.parse(plaintext);
+          const { inner, msg } = nip17UnwrapJson(adminSk, ev);
+          if (!msg || msg.type !== 'adminkey') return;
           if (msg.streamId !== streamId) return;
 
           const frameId = Number(msg.frameId);
@@ -167,16 +163,20 @@
           // Forward key to allowed viewers
           for (const [viewerPub, v] of viewers.entries()) {
             if (!v.allowed) continue;
-            const payload = JSON.stringify({ streamId, frameId, x: blobHash, k: msg.k, m: mime, alg: msg.alg || 'aes-gcm', v: 1 });
-            const enc = nip44Encrypt(adminSk, viewerPub, payload);
-            const dm = makeSignedEventUnsigned(4, adminSk, {
-              content: enc,
-              tags: [ ['p', viewerPub], ['d', streamId], ['i', String(frameId)] ]
+            const dm = await nip17WrapJson(adminSk, viewerPub, {
+              type: 'viewerkey',
+              streamId,
+              frameId,
+              x: blobHash,
+              k: msg.k,
+              m: mime,
+              alg: msg.alg || 'aes-gcm',
+              v: 1,
             });
             publish(dm); // don't await each
           }
 
-          setStatus(`got key for frame ${frameId} from ${npubFromPubkey(ev.pubkey)}`);
+          setStatus(`got key for frame ${frameId} from ${npubFromPubkey(inner.pubkey)}`);
         } catch (e) {
           console.error(e);
           setStatus(`error decrypting adminkey dm: ${e.message || e}`);

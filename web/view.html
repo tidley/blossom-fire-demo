@@ -33,7 +33,7 @@
         makeSignedEventUnsigned,
         publish,
         sub,
-        nip44Decrypt,
+        nip17UnwrapJson,
       } from './util.js';
 
       const streamId = getStreamId();
@@ -81,13 +81,13 @@
         }
       });
 
-      // Subscribe to DMs addressed to this viewer (keys)
+      // Subscribe to DMs addressed to this viewer (NIP-17 keys)
       sub([
-        { kinds: [4], '#p': [viewer.pk], '#d': [streamId], limit: 200 }
+        { kinds: [1059], '#p': [viewer.pk], limit: 500 }
       ], async (ev) => {
         try {
-          const plaintext = nip44Decrypt(viewer.sk, ev.pubkey, ev.content);
-          const msg = JSON.parse(plaintext);
+          const { msg } = nip17UnwrapJson(viewer.sk, ev);
+          if (!msg || msg.type !== 'viewerkey') return;
           if (msg.streamId !== streamId) return;
 
           keys.set(Number(msg.frameId), { keyB64: msg.k, blobHash: msg.x, mime: msg.m || 'image/webp' });
