@@ -1,17 +1,17 @@
 [info]
-relay_url = "ws://0.0.0.0:8080"
-name = "Local Demo Relay"
-description = "Local relay for Blossom Fire demo"
+relay_url = "wss://relay.tomdwyer.uk"
+name = "Blossom Fire Relay"
+description = "Open relay for Blossom Fire demo public events"
 
 [network]
 address = "0.0.0.0"
 port = 8080
 
 [limits]
-# Permissive for LAN demo
+# Permissive for demo/testing
 messages_per_sec = 0
 subscriptions_per_min = 0
 
-# NOTE:
-# Do not define [authorization] for open demo mode.
-# On this relay build, an empty pubkey_whitelist can be treated as deny-all.
+# IMPORTANT:
+# Keep relay open by omitting the [authorization] block.
+# On this relay build, an empty pubkey_whitelist can act as deny-all.
