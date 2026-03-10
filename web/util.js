@@ -67,9 +67,19 @@ export async function publish(event) {
 }
 
 export function sub(filters, onEvent) {
-  const s = pool.sub(RELAYS, filters);
-  s.on("event", onEvent);
-  return s;
+  // nostr-tools SimplePool APIs differ by build/version.
+  if (typeof pool.subscribeMany === "function") {
+    return pool.subscribeMany(RELAYS, filters, { onevent: onEvent });
+  }
+  if (typeof pool.sub === "function") {
+    const s = pool.sub(RELAYS, filters);
+    s.on("event", onEvent);
+    return s;
+  }
+  if (typeof pool.subscribe === "function") {
+    return pool.subscribe(RELAYS, filters, { onevent: onEvent });
+  }
+  throw new Error("SimplePool: no subscribe method available");
 }
 
 export function makeSignedEventUnsigned(kind, sk, { content = "", tags = [] } = {}) {
