@@ -24,8 +24,11 @@
         padding: 10px 12px;
       }
       .btn:hover { border-color: #7ab8ff; }
-      .stream-row { display: flex; gap: 10px; align-items: center; margin: 0 0 12px; }
+      .stream-row { display: flex; gap: 10px; align-items: center; margin: 0 0 12px; flex-wrap: wrap; }
       .stream-row input { background: #1a2233; color: #e6edf3; border: 1px solid #3a4354; border-radius: 8px; padding: 8px 10px; min-width: 180px; }
+      .qr { margin-top: 10px; display: grid; gap: 8px; justify-items: start; }
+      .qr img { border: 1px solid #3a4354; border-radius: 8px; background: #fff; width: 180px; height: 180px; }
+      .mini { font-size: 12px; color: #9aa7bd; }
     </style>
   </head>
   <body>
@@ -33,7 +36,8 @@
       <h1>Blossom Fire</h1>
       <div class="stream-row">
         <label for="streamId">Stream ID</label>
-        <input id="streamId" type="text" value="demo1" placeholder="demo1" />
+        <input id="streamId" type="text" value="" placeholder="auto" />
+        <button id="regen" type="button">New ID</button>
       </div>
       <p>Pick a mode. Links below use the selected stream id.</p>
 
@@ -58,29 +62,79 @@
         <p><small>Uses the same Admin page above, same stream id.</small></p>
         <div class="btns">
           <a class="btn" data-page="broadcast-video.html" href="/broadcast-video.html?stream=demo1">Broadcast Video</a>
-          <a class="btn" data-page="view-video.html" href="/view-video.html?stream=demo1">View Video</a>
+          <a class="btn" id="viewVideoLink" data-page="view-video.html" href="/view-video.html?stream=demo1">View Video</a>
+        </div>
+        <div class="qr">
+          <img id="viewVideoQr" alt="QR code for View Video link" />
+          <div class="mini" id="viewVideoUrl"></div>
+          <button id="copyViewVideo" type="button">Copy View Video URL</button>
         </div>
       </section>
     </div>
 
     <script>
       const input = document.getElementById('streamId');
+      const regenBtn = document.getElementById('regen');
       const links = Array.from(document.querySelectorAll('a[data-page]'));
+      const viewVideoLink = document.getElementById('viewVideoLink');
+      const viewVideoQr = document.getElementById('viewVideoQr');
+      const viewVideoUrl = document.getElementById('viewVideoUrl');
+      const copyViewVideo = document.getElementById('copyViewVideo');
+
+      function randomStreamId() {
+        return Math.random().toString(36).slice(2, 8);
+      }
 
       function normalizeStream(v) {
-        const s = (v || '').trim();
-        return s || 'demo1';
+        const s = (v || '').trim().toLowerCase();
+        return s || randomStreamId();
+      }
+
+      function setQueryStream(stream) {
+        const u = new URL(location.href);
+        u.searchParams.set('stream', stream);
+        history.replaceState(null, '', u.toString());
       }
 
       function updateLinks() {
-        const stream = encodeURIComponent(normalizeStream(input.value));
+        let stream = (input.value || '').trim().toLowerCase();
+        if (!stream) {
+          stream = randomStreamId();
+          input.value = stream;
+        }
+
+        const encoded = encodeURIComponent(stream);
         links.forEach((a) => {
           const page = a.getAttribute('data-page');
-          a.href = `/${page}?stream=${stream}`;
+          a.href = `/${page}?stream=${encoded}`;
         });
+
+        const abs = new URL(viewVideoLink.getAttribute('href'), location.origin).toString();
+        viewVideoUrl.textContent = abs;
+        viewVideoQr.src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(abs)}`;
+
+        setQueryStream(stream);
       }
 
+      copyViewVideo.addEventListener('click', async () => {
+        const text = viewVideoUrl.textContent || '';
+        try {
+          await navigator.clipboard.writeText(text);
+          copyViewVideo.textContent = 'Copied';
+          setTimeout(() => (copyViewVideo.textContent = 'Copy View Video URL'), 1000);
+        } catch {}
+      });
+
+      regenBtn.addEventListener('click', () => {
+        input.value = randomStreamId();
+        updateLinks();
+      });
+
       input.addEventListener('input', updateLinks);
+
+      // CLI/URL override support: /?stream=demo2
+      const qStream = new URL(location.href).searchParams.get('stream');
+      input.value = normalizeStream(qStream || input.value);
       updateLinks();
     </script>
   </body>
