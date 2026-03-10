@@ -12,7 +12,6 @@ port = 8080
 messages_per_sec = 0
 subscriptions_per_min = 0
 
-[authorization]
-# Open relay for LAN demo
-pubkey_whitelist = []
-domain_whitelist = []
+# NOTE:
+# Do not define [authorization] for open demo mode.
+# On this relay build, an empty pubkey_whitelist can be treated as deny-all.
