@@ -102,7 +102,9 @@
         if (!mseMime) return;
         if (sb) return;
         sb = ms.addSourceBuffer(mseMime);
-        sb.mode = 'segments';
+        // Use sequence mode so each appended chunk is treated as next-in-line
+        // even if source timestamps restart/reset per recorded blob.
+        sb.mode = 'sequence';
         sb.addEventListener('updateend', pump);
         pump();
       });

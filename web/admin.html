@@ -96,7 +96,9 @@
       previewMs.addEventListener('sourceopen', () => {
         if (!previewMseMime || previewSb) return;
         previewSb = previewMs.addSourceBuffer(previewMseMime);
-        previewSb.mode = 'segments';
+        // Sequence mode is more tolerant when each chunk is an independently
+        // recorded WebM fragment with local timestamps.
+        previewSb.mode = 'sequence';
         previewSb.addEventListener('updateend', pumpPreview);
         pumpPreview();
       });
