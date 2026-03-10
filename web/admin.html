@@ -121,10 +121,12 @@
         {
           kinds: [1],
           '#t': [TAG_REQ],
-          '#d': [streamId],
           limit: 200,
         }
       ], (ev) => {
+        const dTag = ev.tags.find(t => t[0] === 'd');
+        if (!dTag || dTag[1] !== streamId) return;
+
         const pub = ev.pubkey;
         if (!viewers.has(pub)) {
           viewers.set(pub, { allowed: false, lastSeen: ev.created_at, npub: npubFromPubkey(pub) });
