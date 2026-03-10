@@ -105,7 +105,24 @@ export function nip17WrapJson(senderSk, recipientPubkeyHex, payload) {
   if (!giftWrap?.wrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
   const recipient = { publicKey: recipientPubkeyHex, relays: RELAYS };
   const content = typeof payload === 'string' ? payload : JSON.stringify(payload);
-  return giftWrap.wrapEvent(toPrivkeyInput(senderSk), recipient, content);
+  const sk = toPrivkeyInput(senderSk);
+
+  // Different nostr-tools builds expose different wrapEvent signatures.
+  // Try common forms in order.
+  const attempts = [
+    () => giftWrap.wrapEvent(sk, recipient, content),
+    () => giftWrap.wrapEvent(sk, recipientPubkeyHex, content),
+  ];
+
+  let lastErr = null;
+  for (const fn of attempts) {
+    try {
+      return fn();
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('nip17 wrap failed');
 }
 
 export function nip17UnwrapJson(recipientSk, wrapEv) {
