@@ -170,6 +170,11 @@ It checks:
 
 ---
 
+## Branches
+
+- `main`: working POC (public announcements + NIP-44 key forwarding)
+- `mls`: planned branch for MLS + NIP-17 transport (see `docs/mls-plan.md`)
+
 ## Moving to video (next)
 
 The upgrade is conceptual, not architectural:
