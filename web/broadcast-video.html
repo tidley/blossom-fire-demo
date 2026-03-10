@@ -39,7 +39,8 @@
     <script type="module">
       import { TAG_DEMO_VIDEO, TAG_ADMINKEY, ADMIN_SK_HEX } from './config.js';
       import { blobUpload } from './blob.js';
-      import { aesGcmEncrypt, randKey32, utf8Bytes, b64encode, sha256Bytes } from './crypto.js';
+      import { aesGcmEncrypt, randKey32, deriveChunkKey, utf8Bytes, b64encode, sha256Bytes } from './crypto.js';
+      import { DummyMlsGroup } from './mls/mls.js';
       import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, nip44Encrypt, skFromHex, pubkeyFromSk } from './util.js';
 
       const streamId = getStreamId();
@@ -50,6 +51,11 @@
 
       const adminSk = skFromHex(ADMIN_SK_HEX);
       const adminPub = pubkeyFromSk(adminSk);
+
+      const useMls = new URL(location.href).searchParams.get('mls') === '1';
+      const mlsGroup = useMls ? await DummyMlsGroup.openOrCreate({ streamId }) : null;
+      // In real MLS: epochKey comes from MLS exporter(label="blossom-fire", context=streamId).
+      const epochKey = useMls ? await mlsGroup.exportEpochKey(streamId) : null;
 
       const statusEl = document.querySelector('#status');
       const mimeEl = document.querySelector('#mime');
@@ -92,7 +98,9 @@
           const buf = await blob.arrayBuffer();
           const plaintext = new Uint8Array(buf);
 
-          const key = randKey32();
+          const key = useMls
+            ? await deriveChunkKey(epochKey, streamId, chunkId)
+            : randKey32();
           const aad = await sha256Bytes(utf8Bytes(`${streamId}:${chunkId}`));
           const { iv, ciphertext } = await aesGcmEncrypt(key, plaintext, { aadBytes: aad });
 
@@ -116,14 +124,16 @@
           });
           await publish(ann);
 
-          // send key to admin via NIP-44 DM
-          const keyMsg = JSON.stringify({ streamId, frameId: chunkId, x: hash, k: b64encode(key), m: chosenMime || 'video/webm', c: chosenMime || 'video/webm', alg: 'aes-gcm', v: 1 });
-          const enc = nip44Encrypt(broadcaster.sk, adminPub, keyMsg);
-          const dm = makeSignedEventUnsigned(4, broadcaster.sk, {
-            content: enc,
-            tags: [ ['p', adminPub], ['t', TAG_ADMINKEY], ['d', streamId], ['i', String(chunkId)] ]
-          });
-          await publish(dm);
+          if (!useMls) {
+            // send key to admin via NIP-44 DM (main branch fanout model)
+            const keyMsg = JSON.stringify({ streamId, frameId: chunkId, x: hash, k: b64encode(key), m: chosenMime || 'video/webm', c: chosenMime || 'video/webm', alg: 'aes-gcm', v: 1 });
+            const enc = nip44Encrypt(broadcaster.sk, adminPub, keyMsg);
+            const dm = makeSignedEventUnsigned(4, broadcaster.sk, {
+              content: enc,
+              tags: [ ['p', adminPub], ['t', TAG_ADMINKEY], ['d', streamId], ['i', String(chunkId)] ]
+            });
+            await publish(dm);
+          }
 
           setStatus(`sent chunk ${chunkId} → ${hash.slice(0,8)}… (${blob.size} bytes)`);
           chunkId++;

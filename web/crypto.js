@@ -31,6 +31,38 @@ export function randKey32() {
   return crypto.getRandomValues(new Uint8Array(32));
 }
 
+// HKDF-SHA256 helper (WebCrypto)
+export async function hkdfSha256(ikmBytes, { saltBytes = new Uint8Array([]), infoBytes = new Uint8Array([]), length = 32 } = {}) {
+  const ikmKey = await crypto.subtle.importKey(
+    "raw",
+    ikmBytes,
+    "HKDF",
+    false,
+    ["deriveBits"]
+  );
+  const bits = await crypto.subtle.deriveBits(
+    {
+      name: "HKDF",
+      hash: "SHA-256",
+      salt: saltBytes,
+      info: infoBytes,
+    },
+    ikmKey,
+    length * 8
+  );
+  return new Uint8Array(bits);
+}
+
+// MLS plan: per-epoch exporter secret -> per-chunk key derivation.
+// K_i = HKDF(ikm=epochKey, salt=streamId, info="chunk:"+i, len=32)
+export async function deriveChunkKey(epochKey32, streamId, chunkId) {
+  return hkdfSha256(epochKey32, {
+    saltBytes: utf8Bytes(streamId),
+    infoBytes: utf8Bytes(`chunk:${chunkId}`),
+    length: 32,
+  });
+}
+
 export function utf8Bytes(s) {
   return new TextEncoder().encode(s);
 }

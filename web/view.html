@@ -26,7 +26,8 @@
     <script type="module">
       import { TAG_REQ, TAG_DEMO } from './config.js';
       import { blobFetch } from './blob.js';
-      import { aesGcmDecrypt, b64decode, utf8Bytes, sha256Bytes } from './crypto.js';
+      import { aesGcmDecrypt, b64decode, deriveChunkKey, utf8Bytes, sha256Bytes } from './crypto.js';
+      import { DummyMlsGroup } from './mls/mls.js';
       import {
         getStreamId,
         getOrCreateViewerKeypair,
@@ -41,6 +42,10 @@
 
       const viewer = getOrCreateViewerKeypair('demo.viewer.sk');
       document.querySelector('#npub').textContent = viewer.npub;
+
+      const useMls = new URL(location.href).searchParams.get('mls') === '1';
+      const mlsGroup = useMls ? await DummyMlsGroup.openOrCreate({ streamId }) : null;
+      const epochKey = useMls ? await mlsGroup.exportEpochKey(streamId) : null;
 
       const statusEl = document.querySelector('#status');
       const imgEl = document.querySelector('#img');
@@ -58,7 +63,7 @@
         tags: [ ['t', TAG_REQ], ['d', streamId] ]
       });
       await publish(req);
-      setStatus('requested access; waiting for keys…');
+      setStatus(useMls ? 'mls: waiting for announcements…' : 'requested access; waiting for keys…');
 
       // Subscribe to frame announcements
       sub([
@@ -81,41 +86,48 @@
         }
       });
 
-      // Subscribe to DMs addressed to this viewer (keys)
-      sub([
-        { kinds: [4], '#p': [viewer.pk], '#d': [streamId], limit: 200 }
-      ], async (ev) => {
-        try {
-          const plaintext = nip44Decrypt(viewer.sk, ev.pubkey, ev.content);
-          const msg = JSON.parse(plaintext);
-          if (msg.streamId !== streamId) return;
+      if (!useMls) {
+        // Subscribe to DMs addressed to this viewer (keys)
+        sub([
+          { kinds: [4], '#p': [viewer.pk], '#d': [streamId], limit: 200 }
+        ], async (ev) => {
+          try {
+            const plaintext = nip44Decrypt(viewer.sk, ev.pubkey, ev.content);
+            const msg = JSON.parse(plaintext);
+            if (msg.streamId !== streamId) return;
 
-          keys.set(Number(msg.frameId), { keyB64: msg.k, blobHash: msg.x, mime: msg.m || 'image/webp' });
-          setStatus(`allowed; got key for frame ${msg.frameId}`);
-          await tryRender(Number(msg.frameId));
-        } catch (e) {
-          // likely not decryptable
-        }
-      });
+            keys.set(Number(msg.frameId), { keyB64: msg.k, blobHash: msg.x, mime: msg.m || 'image/webp' });
+            setStatus(`allowed; got key for frame ${msg.frameId}`);
+            await tryRender(Number(msg.frameId));
+          } catch (e) {
+            // likely not decryptable
+          }
+        });
+      }
 
       async function tryRender(frameId) {
-        const k = keys.get(frameId);
         const a = announced.get(frameId);
-        if (!k || !a) return;
+        if (!a) return;
 
-        const blobHash = k.blobHash || a.blobHash;
-        const mime = k.mime || a.mime;
+        const k = keys.get(frameId);
+        if (!useMls && !k) return;
+
+        const blobHash = (k && k.blobHash) || a.blobHash;
+        const mime = (k && k.mime) || a.mime;
 
         const payload = await blobFetch(blobHash);
         const iv = payload.slice(0, 12);
         const ct = payload.slice(12);
-        const keyBytes = b64decode(k.keyB64);
+        const keyBytes = useMls
+          ? await deriveChunkKey(epochKey, streamId, frameId)
+          : b64decode(k.keyB64);
         const aad = await sha256Bytes(utf8Bytes(`${streamId}:${frameId}`));
 
         try {
           const pt = await aesGcmDecrypt(keyBytes, iv, ct, { aadBytes: aad });
           const blob = new Blob([pt], { type: mime });
           imgEl.src = URL.createObjectURL(blob);
+          if (useMls) setStatus(`mls: rendered chunk ${frameId}`);
         } catch (e) {
           setStatus('have blob but not allowed (or wrong key)');
         }
