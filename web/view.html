@@ -32,7 +32,7 @@
     <img id="img" />
 
     <script type="module">
-      import { TAG_REQ, TAG_DEMO } from './config.js';
+      import { TAG_REQ, TAG_DEMO, ADMIN_SK_HEX } from './config.js';
       import { blobFetch } from './blob.js';
       import { aesGcmDecrypt, b64decode, utf8Bytes } from './crypto.js';
       import {
@@ -42,6 +42,9 @@
         publish,
         sub,
         nip17UnwrapJson,
+        nip17WrapJson,
+        skFromHex,
+        pubkeyFromSk,
       } from './util.js';
 
       const streamId = getStreamId();
@@ -60,12 +63,22 @@
 
       function setStatus(s) { statusEl.textContent = s; }
 
-      // Auto-request access
+      // Auto-request access (kind1 + NIP-17 fallback)
       const req = makeSignedEventUnsigned(1, viewer.sk, {
         content: 'request',
         tags: [ ['t', TAG_REQ], ['d', streamId] ]
       });
       await publish(req);
+      try {
+        const adminPub = pubkeyFromSk(skFromHex(ADMIN_SK_HEX));
+        const dm = await nip17WrapJson(viewer.sk, adminPub, {
+          type: 'access_req',
+          streamId,
+          role: 'viewer',
+          v: 1,
+        });
+        await publish(dm);
+      } catch {}
       setStatus('requested access; waiting for keys…');
 
       // Subscribe to frame announcements

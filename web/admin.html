@@ -151,8 +151,22 @@
       ], async (ev) => {
         try {
           const { inner, msg } = nip17UnwrapJson(adminSk, ev);
-          if (!msg || msg.type !== 'adminkey') return;
-          if (msg.streamId !== streamId) return;
+          if (!msg || msg.streamId !== streamId) return;
+
+          if (msg.type === 'access_req') {
+            const pub = inner.pubkey;
+            if (!viewers.has(pub)) {
+              viewers.set(pub, { allowed: false, lastSeen: ev.created_at, npub: npubFromPubkey(pub) });
+            } else {
+              const v = viewers.get(pub);
+              v.lastSeen = ev.created_at;
+              viewers.set(pub, v);
+            }
+            renderViewers();
+            return;
+          }
+
+          if (msg.type !== 'adminkey') return;
 
           const frameId = Number(msg.frameId);
           const blobHash = msg.x;
