@@ -105,13 +105,23 @@ export function nip17WrapJson(senderSk, recipientPubkeyHex, payload) {
   if (!giftWrap?.wrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
   const recipient = { publicKey: recipientPubkeyHex, relays: RELAYS };
   const content = typeof payload === 'string' ? payload : JSON.stringify(payload);
-  const sk = toPrivkeyInput(senderSk);
 
   // Different nostr-tools builds expose different wrapEvent signatures.
-  // Try common forms in order.
+  // Try both event-first and sender-first variants with both Uint8Array and hex keys.
+  const skHex = toPrivkeyInput(senderSk);
+  const rumor = { kind: 14, created_at: now(), tags: [], content };
   const attempts = [
-    () => giftWrap.wrapEvent(sk, recipient, content),
-    () => giftWrap.wrapEvent(sk, recipientPubkeyHex, content),
+    // Variant A: wrapEvent(event, senderSk, recipientPubkey)
+    () => giftWrap.wrapEvent(rumor, senderSk, recipientPubkeyHex),
+    () => giftWrap.wrapEvent(rumor, skHex, recipientPubkeyHex),
+
+    // Variant B: wrapEvent(senderSk, recipientObj, content)
+    () => giftWrap.wrapEvent(senderSk, recipient, content),
+    () => giftWrap.wrapEvent(skHex, recipient, content),
+
+    // Fallback seen in some builds
+    () => giftWrap.wrapEvent(senderSk, recipientPubkeyHex, content),
+    () => giftWrap.wrapEvent(skHex, recipientPubkeyHex, content),
   ];
 
   let lastErr = null;
