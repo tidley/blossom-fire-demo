@@ -7,6 +7,8 @@ import {
   nip44,
 } from "https://esm.sh/nostr-tools@2.10.2";
 
+import { nip44EncryptWith, nip44DecryptWith } from './nip44wrap.js';
+
 // Minimal hex helpers (avoid relying on nostr-tools named exports that vary by build)
 export function bytesToHex(bytes) {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -104,11 +106,9 @@ export function makeSignedEventUnsigned(kind, sk, { content = "", tags = [] } = 
 
 export function nip44Encrypt(sk, recipientPubkeyHex, plaintext) {
   // nostr-tools nip44.encrypt expects (plaintext, conversationKey, [nonce])
-  const conversationKey = nip44.getConversationKey(sk, recipientPubkeyHex);
-  return nip44.encrypt(plaintext, conversationKey);
+  return nip44EncryptWith(nip44, sk, recipientPubkeyHex, plaintext);
 }
 
 export function nip44Decrypt(sk, senderPubkeyHex, ciphertext) {
-  const conversationKey = nip44.getConversationKey(sk, senderPubkeyHex);
-  return nip44.decrypt(ciphertext, conversationKey);
+  return nip44DecryptWith(nip44, sk, senderPubkeyHex, ciphertext);
 }

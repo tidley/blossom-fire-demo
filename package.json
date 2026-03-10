@@ -3,9 +3,15 @@
   "private": true,
   "type": "module",
   "devDependencies": {
-    "nostr-tools": "^2.10.2"
+    "@playwright/test": "^1.52.0",
+    "nostr-tools": "^2.10.2",
+    "vitest": "^3.2.4"
   },
   "scripts": {
-    "test:e2e": "node tests/e2e.mjs"
+    "test:e2e": "node tests/e2e.mjs",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e:pw": "playwright test"
   }
 }

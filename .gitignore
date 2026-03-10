@@ -1,8 +1,15 @@
 # demo data
 /data/
 
+# dependencies
+node_modules/
+
 # local secrets
 web/config.local.js
+
+# test artifacts
+playwright-report/
+test-results/
 
 # OS
 .DS_Store

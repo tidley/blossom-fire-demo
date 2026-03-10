@@ -93,6 +93,13 @@
       let sourceBuffer = null;
       let videoCodec = null;
 
+      let pumpVideoInner = () => {};
+      function pumpVideo() {
+        if (!previewVideoToggle.checked) return;
+        if (!sourceBuffer) return;
+        pumpVideoInner();
+      }
+
       function setStatus(s) { statusEl.textContent = s; }
 
       function renderViewers() {
@@ -249,6 +256,13 @@
           try {
             sourceBuffer = mediaSource.addSourceBuffer(videoCodec);
             sourceBuffer.mode = 'sequence';
+            pumpVideoInner = createPump({
+              sourceBuffer,
+              decrypted: videoDecrypted,
+              getLastAppended: () => videoLastAppended,
+              setLastAppended: (n) => { videoLastAppended = n; },
+              onStatus: setStatus,
+            });
             sourceBuffer.addEventListener('updateend', pumpVideo);
             sourceBuffer.addEventListener('error', (e) => {
               console.error('admin sourceBuffer error', e);
@@ -262,31 +276,7 @@
         }, { once: true });
       }
 
-      function pumpVideo() {
-        if (!previewVideoToggle.checked) return;
-        if (!sourceBuffer || sourceBuffer.updating) return;
-
-        let next = null;
-        for (const k of videoDecrypted.keys()) {
-          if (k > videoLastAppended && (next === null || k < next)) next = k;
-        }
-        if (next === null) return;
-
-        const bytes = videoDecrypted.get(next);
-        if (!bytes) return;
-
-        try {
-          sourceBuffer.appendBuffer(bytes.buffer);
-          videoLastAppended = next;
-          if (videoDecrypted.size > 80) {
-            const del = videoLastAppended - 60;
-            for (const k of videoDecrypted.keys()) if (k < del) videoDecrypted.delete(k);
-          }
-        } catch (e) {
-          console.error(e);
-          setStatus(`admin append error: ${e.name || 'Error'}: ${e.message || e}`);
-        }
-      }
+      // `pumpVideo()` is defined near the top and uses the shared MSE pump.
 
       async function tryDecryptVideoChunk(chunkId) {
         if (!previewVideoToggle.checked) return;

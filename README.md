@@ -153,7 +153,24 @@ Video pages:
 
 ---
 
-## Minimal E2E tests (non-browser)
+## Tests
+
+### Unit tests (CI-friendly)
+
+```bash
+npm install
+npm test
+```
+
+Covers:
+
+- AES-256-GCM encrypt/decrypt + failure on wrong **32-byte AAD hash**
+- NIP-44 wrapper behavior (ensures `getConversationKey()` is used)
+- announcement tag parsing
+- admin allowlist gating → which viewer payloads are forwarded
+- MSE append queue logic (next-chunk selection + pruning)
+
+### Minimal E2E tests (non-browser)
 
 This repo includes a small Node-based sanity test suite:
 
@@ -167,6 +184,18 @@ It checks:
 - blob upload/fetch roundtrip
 - relay publish/subscribe roundtrip
 - NIP-44 encrypt/decrypt roundtrip
+
+### Browser E2E smoke tests (Playwright)
+
+These are intentionally lightweight (they verify the pages boot and basic UI state works).
+
+```bash
+# start local services (relay + blob + static web)
+docker compose up -d
+
+# run
+npm run test:e2e:pw
+```
 
 ---
 

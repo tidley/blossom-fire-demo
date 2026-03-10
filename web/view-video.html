@@ -27,6 +27,7 @@
       import { TAG_REQ, TAG_DEMO_VIDEO } from './config.js';
       import { blobFetch } from './blob.js';
       import { aesGcmDecrypt, b64decode, utf8Bytes, sha256Bytes } from './crypto.js';
+      import { createPump } from './mse-pump.js';
       import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, sub, nip44Decrypt } from './util.js';
 
       const streamId = getStreamId();
@@ -50,6 +51,8 @@
       let sourceBuffer = null;
       let codecStr = null;
 
+      let pump = () => {};
+
       function ensureMse(codec) {
         if (mediaSource) return;
         codecStr = codec || 'video/webm;codecs=vp8,opus';
@@ -67,6 +70,13 @@
           try {
             sourceBuffer = mediaSource.addSourceBuffer(codecStr);
             sourceBuffer.mode = 'sequence';
+            pump = createPump({
+              sourceBuffer,
+              decrypted,
+              getLastAppended: () => lastRendered,
+              setLastAppended: (n) => { lastRendered = n; },
+              onStatus: setStatus,
+            });
             sourceBuffer.addEventListener('updateend', pump);
             sourceBuffer.addEventListener('error', (e) => {
               console.error('sourceBuffer error', e);
@@ -103,35 +113,7 @@
         pump();
       }
 
-      function pump() {
-        if (!sourceBuffer || sourceBuffer.updating) return;
-
-        // MediaRecorder viewers may join mid-stream; don't assume chunk 0 exists.
-        // Append the smallest available chunk > lastRendered.
-        let next = null;
-        for (const k of decrypted.keys()) {
-          if (k > lastRendered && (next === null || k < next)) next = k;
-        }
-        if (next === null) return;
-
-        // If there is a gap, we still append what we have (near-live best-effort).
-        const bytes = decrypted.get(next);
-        if (!bytes) return;
-
-        try {
-          sourceBuffer.appendBuffer(bytes.buffer);
-          lastRendered = next;
-
-          // free older chunks
-          if (decrypted.size > 80) {
-            const del = lastRendered - 60;
-            for (const k of decrypted.keys()) if (k < del) decrypted.delete(k);
-          }
-        } catch (e) {
-          console.error(e);
-          setStatus(`append error: ${e.name || 'Error'}: ${e.message || e}`);
-        }
-      }
+      // `pump()` is created once the MSE SourceBuffer exists.
 
       // Publish access request
       const req = makeSignedEventUnsigned(1, viewer.sk, {
