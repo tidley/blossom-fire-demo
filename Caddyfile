@@ -1,0 +1,12 @@
+demo.tomdwyer.uk {
+  root * /srv/web
+  file_server
+}
+
+blossom.tomdwyer.uk {
+  reverse_proxy blossom:3000
+}
+
+relay.tomdwyer.uk {
+  reverse_proxy relay:8080
+}
