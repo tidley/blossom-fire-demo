@@ -3,11 +3,26 @@ import {
   finalizeEvent,
   generateSecretKey,
   getPublicKey,
+  nip17,
   nip19,
   nip44,
 } from "https://esm.sh/nostr-tools@2.10.2";
 
 import { nip44EncryptWith, nip44DecryptWith } from './nip44wrap.js';
+
+// NIP-17 helpers (gift wrap)
+export function nip17WrapJson(senderSk, recipientPubkeyHex, obj) {
+  const recipient = { publicKey: recipientPubkeyHex, relays: RELAYS };
+  const content = typeof obj === 'string' ? obj : JSON.stringify(obj);
+  return nip17.wrapEvent(senderSk, recipient, content);
+}
+
+export function nip17UnwrapJson(recipientSk, wrapEv) {
+  const inner = nip17.unwrapEvent(wrapEv, recipientSk);
+  let msg = null;
+  try { msg = JSON.parse(inner.content || 'null'); } catch {}
+  return { inner, msg };
+}
 
 // Minimal hex helpers (avoid relying on nostr-tools named exports that vary by build)
 export function bytesToHex(bytes) {

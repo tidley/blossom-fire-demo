@@ -37,10 +37,12 @@
     </div>
 
     <script type="module">
-      import { TAG_DEMO_VIDEO, TAG_ADMINKEY, ADMIN_SK_HEX } from './config.js';
+      import { TAG_DEMO_VIDEO, ADMIN_PUB_HEX } from './config.js';
       import { blobUpload } from './blob.js';
-      import { aesGcmEncrypt, randKey32, utf8Bytes, b64encode, sha256Bytes } from './crypto.js';
-      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, nip44Encrypt, skFromHex, pubkeyFromSk } from './util.js';
+      import { aesGcmEncrypt, utf8Bytes, b64encode, sha256Bytes } from './crypto.js';
+      import { deriveChunkKey } from './deriveChunkKey.js';
+      import { createMember } from './mls.js';
+      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, sub, nip17WrapJson, nip17UnwrapJson } from './util.js';
 
       const streamId = getStreamId();
       document.querySelector('#stream').textContent = streamId;
@@ -48,8 +50,6 @@
       const broadcaster = getOrCreateViewerKeypair('demo.broadcaster.sk');
       document.querySelector('#npub').textContent = broadcaster.npub;
 
-      const adminSk = skFromHex(ADMIN_SK_HEX);
-      const adminPub = pubkeyFromSk(adminSk);
 
       const statusEl = document.querySelector('#status');
       const mimeEl = document.querySelector('#mime');
@@ -66,6 +66,61 @@
       let loopTimer = null;
 
       function setStatus(s) { statusEl.textContent = s; }
+
+      // MLS state (for deriving per-chunk encryption keys)
+      const { member: mls, kind: mlsKind, persist: persistMls } = await createMember(
+        `${streamId}:broadcaster-video`,
+        `mls.member.broadcaster-video.${streamId}`
+      );
+      let exporterSecretB64 = null;
+
+      async function refreshExporterSecret() {
+        try {
+          const ctxB64 = b64encode(utf8Bytes(streamId));
+          exporterSecretB64 = mls.export_secret('blossom-fire-demo', ctxB64, 32);
+          persistMls();
+          setStatus(`MLS ready (${mlsKind}) epoch=${mls.group_epoch()}`);
+        } catch {
+          exporterSecretB64 = null;
+        }
+      }
+
+      // NIP-17 join request to admin
+      try {
+        const kp = mls.create_key_package();
+        const req = nip17WrapJson(broadcaster.sk, ADMIN_PUB_HEX, {
+          type: 'mls_join',
+          streamId,
+          role: 'broadcaster-video',
+          kp,
+          v: 1,
+        });
+        await publish(req);
+      } catch (e) {
+        console.warn('mls join request failed', e);
+      }
+
+      // Listen for MLS welcome/commit via NIP-17
+      sub([
+        { kinds: [1059], '#p': [broadcaster.pk], limit: 200 }
+      ], async (ev) => {
+        try {
+          const { inner, msg } = nip17UnwrapJson(broadcaster.sk, ev);
+          if (!msg || msg.streamId !== streamId) return;
+          if (inner.pubkey !== ADMIN_PUB_HEX) return;
+          if (msg.type === 'mls_welcome') {
+            mls.process_welcome(msg.welcome, msg.commit);
+            await refreshExporterSecret();
+          } else if (msg.type === 'mls_commit') {
+            mls.process_commit(msg.commit);
+            await refreshExporterSecret();
+          }
+        } catch {
+          // ignore
+        }
+      });
+
+      await refreshExporterSecret();
 
       async function setupCamera() {
         mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
@@ -89,10 +144,15 @@
         if (!running) return;
         if (!blob || blob.size === 0) return;
         try {
+          if (!exporterSecretB64) {
+            setStatus('waiting for MLS welcome/commit from admin…');
+            return;
+          }
+
           const buf = await blob.arrayBuffer();
           const plaintext = new Uint8Array(buf);
 
-          const key = randKey32();
+          const key = await deriveChunkKey(exporterSecretB64, streamId, chunkId);
           const aad = await sha256Bytes(utf8Bytes(`${streamId}:${chunkId}`));
           const { iv, ciphertext } = await aesGcmEncrypt(key, plaintext, { aadBytes: aad });
 
@@ -112,18 +172,10 @@
               ['x', hash],
               ['m', chosenMime || 'video/webm'],
               ['c', chosenMime || 'video/webm'],
+              ['e', String(mls.group_epoch())],
             ]
           });
           await publish(ann);
-
-          // send key to admin via NIP-44 DM
-          const keyMsg = JSON.stringify({ streamId, frameId: chunkId, x: hash, k: b64encode(key), m: chosenMime || 'video/webm', c: chosenMime || 'video/webm', alg: 'aes-gcm', v: 1 });
-          const enc = nip44Encrypt(broadcaster.sk, adminPub, keyMsg);
-          const dm = makeSignedEventUnsigned(4, broadcaster.sk, {
-            content: enc,
-            tags: [ ['p', adminPub], ['t', TAG_ADMINKEY], ['d', streamId], ['i', String(chunkId)] ]
-          });
-          await publish(dm);
 
           setStatus(`sent chunk ${chunkId} → ${hash.slice(0,8)}… (${blob.size} bytes)`);
           chunkId++;

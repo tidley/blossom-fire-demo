@@ -38,12 +38,12 @@
     </div>
 
     <script type="module">
-      import { TAG_DEMO, TAG_REQ } from './config.js';
+      import { TAG_DEMO, ADMIN_PUB_HEX } from './config.js';
       import { blobUpload } from './blob.js';
       import { aesGcmEncrypt, utf8Bytes, sha256Bytes, b64encode } from './crypto.js';
       import { deriveChunkKey } from './deriveChunkKey.js';
       import { createMember } from './mls.js';
-      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, sub, nip44Decrypt } from './util.js';
+      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, sub, nip17WrapJson, nip17UnwrapJson } from './util.js';
 
       const streamId = getStreamId();
       document.querySelector('#stream').textContent = streamId;
@@ -85,26 +85,29 @@
         }
       }
 
-      // Join-request (public) so admin can Welcome us.
+      // Join-request (NIP-17) so admin can Welcome us.
       try {
         const kp = mls.create_key_package();
-        const req = makeSignedEventUnsigned(1, broadcaster.sk, {
-          content: JSON.stringify({ t: 'mls_join', role: 'broadcaster', kp, v: 1 }),
-          tags: [ ['t', TAG_REQ], ['d', streamId] ]
+        const req = nip17WrapJson(broadcaster.sk, ADMIN_PUB_HEX, {
+          type: 'mls_join',
+          streamId,
+          role: 'broadcaster',
+          kp,
+          v: 1,
         });
         await publish(req);
       } catch (e) {
         console.warn('mls join request failed', e);
       }
 
-      // Listen for MLS welcome/commit DMs.
+      // Listen for MLS welcome/commit via NIP-17.
       sub([
-        { kinds: [4], '#p': [broadcaster.pk], '#d': [streamId], limit: 200 }
+        { kinds: [1059], '#p': [broadcaster.pk], limit: 200 }
       ], async (ev) => {
         try {
-          const plaintext = nip44Decrypt(broadcaster.sk, ev.pubkey, ev.content);
-          const msg = JSON.parse(plaintext);
-          if (msg.streamId !== streamId) return;
+          const { inner, msg } = nip17UnwrapJson(broadcaster.sk, ev);
+          if (!msg || msg.streamId !== streamId) return;
+          if (inner.pubkey !== ADMIN_PUB_HEX) return;
           if (msg.type === 'mls_welcome') {
             mls.process_welcome(msg.welcome, msg.commit);
             await refreshExporterSecret();

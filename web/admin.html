@@ -51,7 +51,7 @@
     </div>
 
     <script type="module">
-      import { TAG_REQ, TAG_DEMO, ADMIN_SK_HEX } from './config.js';
+      import { TAG_DEMO, ADMIN_SK_HEX } from './config.js';
       import { blobFetch } from './blob.js';
       import { aesGcmDecrypt, utf8Bytes, sha256Bytes, b64encode } from './crypto.js';
       import { deriveChunkKey } from './deriveChunkKey.js';
@@ -61,10 +61,10 @@
         skFromHex,
         pubkeyFromSk,
         npubFromPubkey,
-        makeSignedEventUnsigned,
         publish,
         sub,
-        nip44Encrypt,
+        nip17WrapJson,
+        nip17UnwrapJson,
       } from './util.js';
 
       const streamId = getStreamId();
@@ -152,11 +152,7 @@
       };
 
       async function dm(toPub, payloadObj) {
-        const enc = nip44Encrypt(adminSk, toPub, JSON.stringify(payloadObj));
-        const ev = makeSignedEventUnsigned(4, adminSk, {
-          content: enc,
-          tags: [ ['p', toPub], ['d', streamId] ]
-        });
+        const ev = nip17WrapJson(adminSk, toPub, payloadObj);
         await publish(ev);
       }
 
@@ -192,36 +188,34 @@
         }
       }
 
-      // Subscribe to public access/join requests
+      // Subscribe to NIP-17 join requests (gift-wrapped) addressed to admin
       sub([
         {
-          kinds: [1],
-          '#t': [TAG_REQ],
+          kinds: [1059],
+          '#p': [adminPub],
           limit: 200,
         }
       ], (ev) => {
-        const d = ev.tags.find(t => t[0] === 'd');
-        if (!d || d[1] !== streamId) return;
-        const pub = ev.pubkey;
-
-        let kp = null;
-        let role = null;
         try {
-          const c = JSON.parse(ev.content || '{}');
-          if (c?.t === 'mls_join') {
-            kp = c.kp || null;
-            role = c.role || null;
-          }
-        } catch {}
+          const { inner, msg } = nip17UnwrapJson(adminSk, ev);
+          if (!msg || msg.type !== 'mls_join') return;
+          if (msg.streamId !== streamId) return;
 
-        const existing = viewers.get(pub) || { allowed: false, joined: false, npub: npubFromPubkey(pub) };
-        viewers.set(pub, {
-          ...existing,
-          lastSeen: ev.created_at,
-          kp: kp || existing.kp,
-          role: role || existing.role,
-        });
-        renderViewers();
+          const pub = inner.pubkey; // authenticated sender (inner event)
+          const kp = msg.kp || null;
+          const role = msg.role || null;
+
+          const existing = viewers.get(pub) || { allowed: false, joined: false, npub: npubFromPubkey(pub) };
+          viewers.set(pub, {
+            ...existing,
+            lastSeen: inner.created_at,
+            kp: kp || existing.kp,
+            role: role || existing.role,
+          });
+          renderViewers();
+        } catch {
+          // ignore undecryptable
+        }
       });
 
       // Subscribe to frame announcements + decrypt for preview using MLS exporter

@@ -3,7 +3,7 @@
 // Usage:
 //   RELAY=wss://relay.tomdwyer.uk BLOSSOM=https://blossom.tomdwyer.uk node tests/e2e.mjs
 
-import { SimplePool, finalizeEvent, generateSecretKey, getPublicKey, nip44 } from "nostr-tools";
+import { SimplePool, finalizeEvent, generateSecretKey, getPublicKey, nip17 } from "nostr-tools";
 
 const RELAY = process.env.RELAY;
 const BLOSSOM = process.env.BLOSSOM;
@@ -70,26 +70,22 @@ async function testRelayPubSub() {
   console.log('OK relay pub/sub');
 }
 
-async function testNip44Roundtrip() {
+async function testNip17Roundtrip() {
   const aSk = generateSecretKey();
-  const aPk = getPublicKey(aSk);
   const bSk = generateSecretKey();
   const bPk = getPublicKey(bSk);
 
-  const ckAB = nip44.getConversationKey(aSk, bPk);
-  const ckBA = nip44.getConversationKey(bSk, aPk);
-
   const pt = JSON.stringify({ hello: 'world', t: Date.now() });
-  const ct = nip44.encrypt(pt, ckAB);
-  const dec = nip44.decrypt(ct, ckBA);
-  if (dec !== pt) throw new Error('nip44 decrypt mismatch');
-  console.log('OK nip44 roundtrip');
+  const wrap = nip17.wrapEvent(aSk, { publicKey: bPk, relays: [RELAY] }, pt);
+  const inner = nip17.unwrapEvent(wrap, bSk);
+  if (inner.content !== pt) throw new Error('nip17 unwrap mismatch');
+  console.log('OK nip17 roundtrip');
 }
 
 async function main(){
   await testBlossomRoundtrip();
   await testRelayPubSub();
-  await testNip44Roundtrip();
+  await testNip17Roundtrip();
   await pool.close([RELAY]);
 }
 

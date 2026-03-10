@@ -1,0 +1,17 @@
+{
+  # Use Let's Encrypt in production; for local/dev you can run without this file.
+  email {$CADDY_EMAIL}
+}
+
+{$DEMO_HOST} {
+  root * /srv/web
+  file_server
+}
+
+{$BLOSSOM_HOST} {
+  reverse_proxy blob:3000
+}
+
+{$RELAY_HOST} {
+  reverse_proxy relay:8080
+}

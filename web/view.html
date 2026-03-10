@@ -24,7 +24,7 @@
     <img id="img" />
 
     <script type="module">
-      import { TAG_REQ, TAG_DEMO } from './config.js';
+      import { TAG_DEMO, ADMIN_PUB_HEX } from './config.js';
       import { blobFetch } from './blob.js';
       import { aesGcmDecrypt, b64decode, utf8Bytes, sha256Bytes, b64encode } from './crypto.js';
       import { deriveChunkKey } from './deriveChunkKey.js';
@@ -32,10 +32,10 @@
       import {
         getStreamId,
         getOrCreateViewerKeypair,
-        makeSignedEventUnsigned,
         publish,
         sub,
-        nip44Decrypt,
+        nip17WrapJson,
+        nip17UnwrapJson,
       } from './util.js';
 
       const streamId = getStreamId();
@@ -72,12 +72,15 @@
         }
       }
 
-      // Auto-request access (public join request)
+      // Auto-request access (NIP-17 join request → admin)
       try {
         const kp = mls.create_key_package();
-        const req = makeSignedEventUnsigned(1, viewer.sk, {
-          content: JSON.stringify({ t: 'mls_join', role: 'viewer', kp, v: 1 }),
-          tags: [ ['t', TAG_REQ], ['d', streamId] ]
+        const req = nip17WrapJson(viewer.sk, ADMIN_PUB_HEX, {
+          type: 'mls_join',
+          streamId,
+          role: 'viewer',
+          kp,
+          v: 1,
         });
         await publish(req);
       } catch (e) {
@@ -106,14 +109,15 @@
         }
       });
 
-      // Subscribe to DMs addressed to this viewer (MLS + legacy keys)
+      // Subscribe to NIP-17 control-plane messages addressed to this viewer
       sub([
-        { kinds: [4], '#p': [viewer.pk], '#d': [streamId], limit: 200 }
+        { kinds: [1059], '#p': [viewer.pk], limit: 200 }
       ], async (ev) => {
         try {
-          const plaintext = nip44Decrypt(viewer.sk, ev.pubkey, ev.content);
-          const msg = JSON.parse(plaintext);
-          if (msg.streamId !== streamId) return;
+          const { inner, msg } = nip17UnwrapJson(viewer.sk, ev);
+          if (!msg || msg.streamId !== streamId) return;
+          // Only accept MLS control-plane from admin.
+          if (inner.pubkey !== ADMIN_PUB_HEX) return;
 
           if (msg.type === 'mls_welcome') {
             mls.process_welcome(msg.welcome, msg.commit);
@@ -122,7 +126,7 @@
             mls.process_commit(msg.commit);
             await refreshExporterSecret();
           } else if (msg.k && msg.frameId != null) {
-            // legacy per-frame key
+            // legacy per-frame key (fallback)
             legacyKeys.set(Number(msg.frameId), msg.k);
             await tryRender(Number(msg.frameId));
           }

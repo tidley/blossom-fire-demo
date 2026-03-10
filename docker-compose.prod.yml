@@ -1,0 +1,42 @@
+services:
+  relay:
+    image: ghcr.io/scsibug/nostr-rs-relay:latest
+    container_name: nostr-relay
+    restart: unless-stopped
+    volumes:
+      - ./relay:/config:ro
+      - ./data/relay:/data
+    environment:
+      - RUST_LOG=info
+    command: ["--config", "/config/config.toml"]
+
+  blob:
+    image: node:20-alpine
+    container_name: blob-server
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./blob:/app:ro
+      - ./data/blobs:/data/blobs
+    environment:
+      - BLOB_DIR=/data/blobs
+      - PORT=3000
+    command: ["node", "server.js"]
+
+  caddy:
+    image: caddy:2
+    container_name: demo-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DEMO_HOST=${DEMO_HOST}
+      - BLOSSOM_HOST=${BLOSSOM_HOST}
+      - RELAY_HOST=${RELAY_HOST}
+      - CADDY_EMAIL=${CADDY_EMAIL}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web:/srv/web:ro
+      - ./data/caddy:/data
+      - ./data/caddy_config:/config

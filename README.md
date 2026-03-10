@@ -8,8 +8,8 @@ Because once ciphertext starts spreading across blob hosts, caches, and mirrors,
 
 It now supports an experimental **MLS (Messaging Layer Security)** group-key flow using **OpenMLS compiled to WASM** (Rust → wasm-bindgen/wasm-pack). Nostr is used as transport:
 
-- **Join requests** are public kind 1 events (tagged `t=blossom-fire-demo-req`).
-- **Welcome/Commit messages** are delivered over encrypted DMs (currently kind 4 with NIP-44 encryption as a lightweight transport wrapper).
+- **Join requests** are sent privately to the Admin via **NIP-17 gift wrap** (outer **kind 1059**, inner **kind 14**).
+- **Welcome/Commit messages** are also sent via **NIP-17**.
 
 If the WASM package is not built/available, the app falls back to a **DummyMlsGroup** that behaves like the old per-frame-key demo.
 
@@ -50,10 +50,10 @@ This binds each ciphertext to its stream+frame index (prevents swapping frames w
 
 ### Nostr pieces
 
-We use a single relay (configurable) for:
+We use one or more relays (configurable) for:
 
-- **Public events** (frame announcements, access requests)
-- **Private key delivery** via **NIP-44**, transported in **kind 4** DMs.
+- **Public events** (frame/chunk announcements)
+- **Private control-plane messages** (join/welcome/commit) via **NIP-17**.
 
 #### Public frame announcement (kind 1)
 Broadcaster publishes a public event per frame:
@@ -67,22 +67,16 @@ Broadcaster publishes a public event per frame:
 
 Anyone can see these and fetch ciphertext, but cannot decrypt without keys.
 
-#### Viewer access request (kind 1)
-Each viewer auto-generates a Nostr keypair in the browser (stored in `localStorage`) and publishes:
-
-- tags:
-  - `t=blossom-fire-demo-req`
-  - `d=<streamId>`
+#### Join request (NIP-17)
+Each viewer/broadcaster auto-generates a Nostr keypair in the browser (stored in `localStorage`) and sends a **NIP-17** message to the Admin pubkey containing an MLS `KeyPackage`.
 
 Admin uses this to populate the allowlist UI.
 
-#### MLS Welcome/Commit transport (kind 4 DM, NIP-44 encrypted)
+#### MLS Welcome/Commit transport (NIP-17)
 
-- Viewer/Broadcaster → Admin: posts a public join request containing an MLS `KeyPackage`.
-- Admin → New member: sends an encrypted DM with `{type:"mls_welcome", welcome, commit}`.
-- Admin → Existing members: sends an encrypted DM with `{type:"mls_commit", commit}` so everyone advances to the new epoch.
-
-Encryption/transport is currently **kind 4 DMs** with **NIP-44** (a pragmatic transport wrapper).
+- Viewer/Broadcaster → Admin: NIP-17 `{type:"mls_join", role, kp}`
+- Admin → New member: NIP-17 `{type:"mls_welcome", welcome, commit}`
+- Admin → Existing members: NIP-17 `{type:"mls_commit", commit}` so everyone advances to the new epoch.
 
 Revocation remains "forward-only" at the epoch level: removing members isn’t implemented yet; but after each add/commit, only current members can derive future keys.
 
@@ -102,16 +96,17 @@ Revocation remains "forward-only" at the epoch level: removing members isn’t i
 
 This step is optional (the demo will fall back to `DummyMlsGroup`), but required for the real MLS flow.
 
-Prereqs:
+Build (recommended, uses docker `rustwasm/wasm-pack` if you don't have wasm-pack installed):
+
+```bash
+npm run build:mls
+```
+
+Or build locally:
 
 ```bash
 rustup target add wasm32-unknown-unknown
 cargo install wasm-pack
-```
-
-Build:
-
-```bash
 cd mls-wasm
 wasm-pack build --release --target web --out-dir ../web/pkg_mls
 ```
@@ -134,38 +129,36 @@ Important:
 - Ensure **only one A record** per name (don’t leave old host IPs around).
 - Lower TTL (e.g. 60–300s) while iterating.
 
-### 3) Configure Caddy
-Edit `Caddyfile` and replace the hostnames with your chosen ones:
+### 3) Configure Caddy / docker-compose
+This repo ships a `docker-compose.prod.yml` + `Caddyfile` that expects environment variables.
 
-```caddy
-DEMO_HOST {
-  root * /srv/web
-  file_server
-}
+Create an `.env` on the VPS:
 
-BLOSSOM_HOST {
-  reverse_proxy blossom:3000
-}
-
-RELAY_HOST {
-  reverse_proxy relay:8080
-}
+```bash
+DEMO_HOST=demo.example.com
+BLOSSOM_HOST=blossom.example.com
+RELAY_HOST=relay.example.com
+CADDY_EMAIL=you@example.com
 ```
 
 ### 4) Configure the web app
-Edit `web/config.js`:
+Edit `web/config.js` for your deployment:
 
-- `RELAYS = ["wss://RELAY_HOST"]`
-- `BLOB_BASE = "https://BLOSSOM_HOST"`
+- set `RELAYS` to include your relay WSS URL (e.g. `wss://relay.example.com`)
+- set `BLOB_BASE` to your blossom host (e.g. `https://blossom.example.com`)
+- set `ADMIN_SK_HEX` (and update `ADMIN_PUB_HEX` to match)
 
-### 5) Run
+### 5) Build MLS WASM + run
 On the VPS:
 
 ```bash
 git clone https://github.com/tidley/blossom-fire-demo.git
 cd blossom-fire-demo
 
-sudo docker compose -f docker-compose.prod.yml up -d
+npm ci
+npm run build:mls
+
+sudo docker compose -f docker-compose.prod.yml --env-file .env up -d
 sudo docker compose -f docker-compose.prod.yml ps
 ```
 
@@ -196,7 +189,7 @@ npm test
 Covers:
 
 - AES-256-GCM encrypt/decrypt + failure on wrong **32-byte AAD hash**
-- NIP-44 wrapper behavior (ensures `getConversationKey()` is used)
+- NIP-17 gift wrap roundtrip
 - announcement tag parsing
 - admin allowlist gating → which viewer payloads are forwarded
 - MSE append queue logic (next-chunk selection + pruning)
@@ -214,7 +207,7 @@ It checks:
 
 - blob upload/fetch roundtrip
 - relay publish/subscribe roundtrip
-- NIP-44 encrypt/decrypt roundtrip
+- NIP-17 gift wrap roundtrip
 
 ### Browser E2E smoke tests (Playwright)
 
@@ -238,7 +231,7 @@ The upgrade is conceptual, not architectural:
 - encrypt each chunk with a fresh `K_i`
 - upload ciphertext chunk to Blossom
 - announce chunk on Nostr
-- admin forwards keys via NIP-44
+- members derive keys via MLS exporter (no per-chunk key forwarding)
 
 Viewer playback will use **Media Source Extensions (MSE)** to append decrypted fMP4/WebM chunks.
 

@@ -24,11 +24,13 @@
     <video id="v" controls autoplay playsinline muted></video>
 
     <script type="module">
-      import { TAG_REQ, TAG_DEMO_VIDEO } from './config.js';
+      import { TAG_DEMO_VIDEO, ADMIN_PUB_HEX } from './config.js';
       import { blobFetch } from './blob.js';
-      import { aesGcmDecrypt, b64decode, utf8Bytes, sha256Bytes } from './crypto.js';
+      import { aesGcmDecrypt, utf8Bytes, sha256Bytes, b64encode } from './crypto.js';
+      import { deriveChunkKey } from './deriveChunkKey.js';
+      import { createMember } from './mls.js';
       import { createPump } from './mse-pump.js';
-      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, sub, nip44Decrypt } from './util.js';
+      import { getStreamId, getOrCreateViewerKeypair, publish, sub, nip17WrapJson, nip17UnwrapJson } from './util.js';
 
       const streamId = getStreamId();
       document.querySelector('#stream').textContent = streamId;
@@ -42,7 +44,6 @@
       function setStatus(s) { statusEl.textContent = s; }
 
       // State
-      const keys = new Map();       // chunkId -> { keyB64, blobHash, mime, codec }
       const announced = new Map();  // chunkId -> { blobHash, mime, codec }
       const decrypted = new Map();  // chunkId -> Uint8Array
       let lastRendered = -1;
@@ -91,22 +92,40 @@
         }, { once: true });
       }
 
+      // MLS state
+      const { member: mls, kind: mlsKind, persist: persistMls } = await createMember(
+        `${streamId}:viewer-video:${viewer.pk}`,
+        `mls.member.viewer-video.${streamId}.${viewer.pk}`
+      );
+      let exporterSecretB64 = null;
+
+      async function refreshExporterSecret() {
+        try {
+          const ctxB64 = b64encode(utf8Bytes(streamId));
+          exporterSecretB64 = mls.export_secret('blossom-fire-demo', ctxB64, 32);
+          persistMls();
+          setStatus(`MLS ready (${mlsKind}) epoch=${mls.group_epoch()}`);
+        } catch {
+          exporterSecretB64 = null;
+        }
+      }
+
       async function tryDecrypt(chunkId) {
         if (decrypted.has(chunkId)) return;
-        const k = keys.get(chunkId);
         const a = announced.get(chunkId);
-        if (!k || !a) return;
+        if (!a) return;
+        if (!exporterSecretB64) return;
 
-        const blobHash = k.blobHash || a.blobHash;
-        const mime = k.mime || a.mime || 'video/webm';
-        const codec = k.codec || a.codec || mime;
+        const blobHash = a.blobHash;
+        const mime = a.mime || 'video/webm';
+        const codec = a.codec || mime;
 
         ensureMse(codec);
 
         const payload = await blobFetch(blobHash);
         const iv = payload.slice(0, 12);
         const ct = payload.slice(12);
-        const keyBytes = b64decode(k.keyB64);
+        const keyBytes = await deriveChunkKey(exporterSecretB64, streamId, chunkId);
         const aad = await sha256Bytes(utf8Bytes(`${streamId}:${chunkId}`));
         const pt = await aesGcmDecrypt(keyBytes, iv, ct, { aadBytes: aad });
         decrypted.set(chunkId, pt);
@@ -115,13 +134,21 @@
 
       // `pump()` is created once the MSE SourceBuffer exists.
 
-      // Publish access request
-      const req = makeSignedEventUnsigned(1, viewer.sk, {
-        content: 'request',
-        tags: [ ['t', TAG_REQ], ['d', streamId] ]
-      });
-      await publish(req);
-      setStatus('requested access; waiting for keys…');
+      // Send NIP-17 join request to admin
+      try {
+        const kp = mls.create_key_package();
+        const req = nip17WrapJson(viewer.sk, ADMIN_PUB_HEX, {
+          type: 'mls_join',
+          streamId,
+          role: 'viewer-video',
+          kp,
+          v: 1,
+        });
+        await publish(req);
+      } catch (e) {
+        console.warn('mls join request failed', e);
+      }
+      setStatus('requested access; waiting for MLS welcome…');
 
       // Subscribe to announcements
       sub([
@@ -152,30 +179,28 @@
         }
       });
 
-      // Subscribe to NIP-44 key DMs
+      // Subscribe to NIP-17 MLS control-plane messages
       sub([
-        { kinds: [4], '#p': [viewer.pk], '#d': [streamId], limit: 500 }
+        { kinds: [1059], '#p': [viewer.pk], limit: 200 }
       ], async (ev) => {
         try {
-          const plaintext = nip44Decrypt(viewer.sk, ev.pubkey, ev.content);
-          const msg = JSON.parse(plaintext);
-          if (msg.streamId !== streamId) return;
+          const { inner, msg } = nip17UnwrapJson(viewer.sk, ev);
+          if (!msg || msg.streamId !== streamId) return;
+          if (inner.pubkey !== ADMIN_PUB_HEX) return;
 
-          // Only accept video keys in the video viewer (avoid slideshow keys on same streamId)
-          const mime = msg.m || 'video/webm';
-          if (!mime.startsWith('video/')) return;
-
-          const chunkId = Number(msg.frameId);
-          // Ignore old
-          if (chunkId <= lastRendered) return;
-
-          keys.set(chunkId, { keyB64: msg.k, blobHash: msg.x, mime, codec: msg.c || mime });
-          setStatus(`allowed; got key for chunk ${chunkId}`);
-          await tryDecrypt(chunkId);
-        } catch (e) {
-          // ignore undecryptable
+          if (msg.type === 'mls_welcome') {
+            mls.process_welcome(msg.welcome, msg.commit);
+            await refreshExporterSecret();
+          } else if (msg.type === 'mls_commit') {
+            mls.process_commit(msg.commit);
+            await refreshExporterSecret();
+          }
+        } catch {
+          // ignore
         }
       });
+
+      await refreshExporterSecret();
 
     </script>
   </body>
