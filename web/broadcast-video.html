@@ -48,7 +48,7 @@
       import { aesGcmEncrypt, randKey32, utf8Bytes, b64encode } from './crypto.js';
       import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, skFromHex, pubkeyFromSk, nip17WrapJson } from './util.js';
 
-      const streamId = getStreamId();
+      const streamId = (getStreamId() || 'demo1').trim() || 'demo1';
       document.querySelector('#stream').textContent = streamId;
 
       const broadcaster = getOrCreateViewerKeypair('demo.broadcaster.sk');

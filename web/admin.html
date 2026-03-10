@@ -61,7 +61,7 @@
         nip17WrapJson,
       } from './util.js';
 
-      const streamId = getStreamId();
+      const streamId = (getStreamId() || 'demo1').trim() || 'demo1';
       document.querySelector('#stream').textContent = streamId;
 
       const adminSk = skFromHex(ADMIN_SK_HEX);

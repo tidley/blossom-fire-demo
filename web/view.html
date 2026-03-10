@@ -47,7 +47,7 @@
         pubkeyFromSk,
       } from './util.js';
 
-      const streamId = getStreamId();
+      const streamId = (getStreamId() || 'demo1').trim() || 'demo1';
       document.querySelector('#stream').textContent = streamId;
 
       const viewer = getOrCreateViewerKeypair('demo.viewer.sk');
