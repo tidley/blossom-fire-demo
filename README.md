@@ -96,7 +96,7 @@ Revocation remains "forward-only" at the epoch level: removing members isn’t i
 
 This step is optional (the demo will fall back to `DummyMlsGroup`), but required for the real MLS flow.
 
-Build (recommended, uses docker `rustwasm/wasm-pack` if you don't have wasm-pack installed):
+Build (recommended; uses docker `ghcr.io/rustwasm/wasm-pack` if you don't have wasm-pack installed):
 
 ```bash
 npm run build:mls

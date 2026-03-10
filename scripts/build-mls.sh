@@ -24,10 +24,14 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[build-mls] using docker rustwasm/wasm-pack"
+# Note: Docker Hub's rustwasm/wasm-pack:latest has been unreliable/broken.
+# Prefer the GHCR mirror.
+WASM_PACK_IMAGE=${WASM_PACK_IMAGE:-ghcr.io/rustwasm/wasm-pack:latest}
+
+echo "[build-mls] using docker $WASM_PACK_IMAGE"
 docker run --rm \
   -u "$(id -u):$(id -g)" \
   -v "$ROOT_DIR":/work \
   -w /work \
-  rustwasm/wasm-pack:latest \
+  "$WASM_PACK_IMAGE" \
   wasm-pack build mls-wasm --release --target web --out-dir ../web/pkg_mls
