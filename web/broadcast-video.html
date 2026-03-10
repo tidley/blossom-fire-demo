@@ -29,8 +29,9 @@
       <div>Status: <span id="status">idle</span></div>
       <div class="small" id="mime"></div>
       <div style="margin-top:10px;">
-        <label>Chunk ms: <input id="ms" type="number" value="1000" min="250" step="250" style="width:100px;"></label>
+        <label>Chunk ms: <input id="ms" type="number" value="5000" min="1000" step="500" style="width:100px;"></label>
         <button id="start">Start</button>
+        <span class="small">(higher = smoother, more delay)</span>
         <button id="stop" disabled>Stop</button>
       </div>
     </div>
