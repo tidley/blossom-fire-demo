@@ -24,20 +24,32 @@
         padding: 10px 12px;
       }
       .btn:hover { border-color: #7ab8ff; }
+      .stream-row { display: flex; gap: 10px; align-items: center; margin: 0 0 12px; }
+      .stream-row input { background: #1a2233; color: #e6edf3; border: 1px solid #3a4354; border-radius: 8px; padding: 8px 10px; min-width: 180px; }
     </style>
   </head>
   <body>
     <div class="wrap">
       <h1>Blossom Fire</h1>
-      <p>Pick a mode. Use <code>?stream=demo1</code> (or your stream id) on each page.</p>
+      <div class="stream-row">
+        <label for="streamId">Stream ID</label>
+        <input id="streamId" type="text" value="demo1" placeholder="demo1" />
+      </div>
+      <p>Pick a mode. Links below use the selected stream id.</p>
 
       <section class="card">
-        <h3>Admin + Frames mode</h3>
+        <h3>Admin</h3>
+        <div class="btns">
+          <a class="btn" data-page="admin.html" href="/admin.html?stream=demo1">Admin (shared)</a>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>Frames mode</h3>
         <p><small>Use one Admin page per stream. It handles key forwarding for both Frames and Video.</small></p>
         <div class="btns">
-          <a class="btn" href="/admin.html?stream=demo1">Admin (shared)</a>
-          <a class="btn" href="/broadcast.html?stream=demo1">Broadcast Frames</a>
-          <a class="btn" href="/view.html?stream=demo1">View Frames</a>
+          <a class="btn" data-page="broadcast.html" href="/broadcast.html?stream=demo1">Broadcast Frames</a>
+          <a class="btn" data-page="view.html" href="/view.html?stream=demo1">View Frames</a>
         </div>
       </section>
 
@@ -45,10 +57,31 @@
         <h3>Video mode</h3>
         <p><small>Uses the same Admin page above, same stream id.</small></p>
         <div class="btns">
-          <a class="btn" href="/broadcast-video.html?stream=demo1">Broadcast Video</a>
-          <a class="btn" href="/view-video.html?stream=demo1">View Video</a>
+          <a class="btn" data-page="broadcast-video.html" href="/broadcast-video.html?stream=demo1">Broadcast Video</a>
+          <a class="btn" data-page="view-video.html" href="/view-video.html?stream=demo1">View Video</a>
         </div>
       </section>
     </div>
+
+    <script>
+      const input = document.getElementById('streamId');
+      const links = Array.from(document.querySelectorAll('a[data-page]'));
+
+      function normalizeStream(v) {
+        const s = (v || '').trim();
+        return s || 'demo1';
+      }
+
+      function updateLinks() {
+        const stream = encodeURIComponent(normalizeStream(input.value));
+        links.forEach((a) => {
+          const page = a.getAttribute('data-page');
+          a.href = `/${page}?stream=${stream}`;
+        });
+      }
+
+      input.addEventListener('input', updateLinks);
+      updateLinks();
+    </script>
   </body>
 </html>
