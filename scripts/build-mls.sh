@@ -24,8 +24,8 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-# Note: Docker Hub's rustwasm/wasm-pack:latest has been unreliable/broken.
-# Prefer the GHCR mirror.
+# Note: Docker Hub's rustwasm/wasm-pack image has been unreliable/broken.
+# Prefer the GHCR image.
 WASM_PACK_IMAGE=${WASM_PACK_IMAGE:-ghcr.io/rustwasm/wasm-pack:latest}
 
 echo "[build-mls] using docker $WASM_PACK_IMAGE"
