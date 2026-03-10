@@ -1,9 +1,9 @@
+import * as nostrTools from "https://esm.sh/nostr-tools@2.10.2";
 import {
   SimplePool,
   finalizeEvent,
   generateSecretKey,
   getPublicKey,
-  nip17,
   nip19,
   bytesToHex,
   hexToBytes,
@@ -75,14 +75,19 @@ export function makeSignedEventUnsigned(kind, sk, { content = "", tags = [] } = 
 }
 
 // NIP-17 gift-wrap helpers
+// nostr-tools builds may expose this as `nip17` or `nip59`.
+const giftWrap = nostrTools.nip17 || nostrTools.nip59;
+
 export function nip17WrapJson(senderSk, recipientPubkeyHex, payload) {
+  if (!giftWrap?.wrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
   const recipient = { publicKey: recipientPubkeyHex, relays: RELAYS };
   const content = typeof payload === 'string' ? payload : JSON.stringify(payload);
-  return nip17.wrapEvent(senderSk, recipient, content);
+  return giftWrap.wrapEvent(senderSk, recipient, content);
 }
 
 export function nip17UnwrapJson(recipientSk, wrapEv) {
-  const inner = nip17.unwrapEvent(wrapEv, recipientSk);
+  if (!giftWrap?.unwrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
+  const inner = giftWrap.unwrapEvent(wrapEv, recipientSk);
   let msg = null;
   try { msg = JSON.parse(inner.content || 'null'); } catch {}
   return { inner, msg };
