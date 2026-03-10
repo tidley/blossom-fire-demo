@@ -161,9 +161,10 @@
         if (appended.has(chunkId)) return;
         const k = keys.get(chunkId);
         const a = announced.get(chunkId);
-        if (!k || !a) return;
+        if (!k) return;
 
-        const blobHash = k.blobHash || a.blobHash;
+        const blobHash = k.blobHash || a?.blobHash;
+        if (!blobHash) return;
         const payload = await blobFetch(blobHash);
         const iv = payload.slice(0, 12);
         const ct = payload.slice(12);

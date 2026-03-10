@@ -122,10 +122,11 @@
       async function tryRender(frameId) {
         const k = keys.get(frameId);
         const a = announced.get(frameId);
-        if (!k || !a) return;
+        if (!k) return;
 
-        const blobHash = k.blobHash || a.blobHash;
-        const mime = k.mime || a.mime;
+        const blobHash = k.blobHash || a?.blobHash;
+        const mime = k.mime || a?.mime || 'image/webp';
+        if (!blobHash) return;
 
         const payload = await blobFetch(blobHash);
         const iv = payload.slice(0, 12);
