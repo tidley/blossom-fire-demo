@@ -68,6 +68,7 @@
       let chunkId = 0;
       let running = false;
       let chosenMime = null;
+      let inFlight = Promise.resolve();
 
       // Keep decrypt key stable until admin indicates viewer list changed.
       let currentKey = randKey32();
@@ -162,43 +163,22 @@
         }
       }
 
-      async function recordOneChunk(ms) {
-        return new Promise((resolve, reject) => {
-          try {
-            recorder = new MediaRecorder(mediaStream, { mimeType: chosenMime });
-          } catch (e) {
-            reject(e);
-            return;
-          }
-
-          let data = null;
-          recorder.ondataavailable = (ev) => { data = ev.data; };
-          recorder.onerror = (ev) => reject(ev.error || ev);
-          recorder.onstop = () => resolve(data);
-
-          recorder.start();
-          setTimeout(() => {
-            try {
-              if (recorder && recorder.state !== 'inactive') recorder.stop();
-            } catch (e) {
-              reject(e);
-            }
-          }, ms);
-        });
-      }
-
-      async function loop() {
-        const ms = Math.max(250, Number(msEl.value || 1000));
-        while (running) {
-          try {
-            const blob = await recordOneChunk(ms);
-            await handleChunk(blob);
-          } catch (e) {
+      function startRecorder(ms) {
+        recorder = new MediaRecorder(mediaStream, { mimeType: chosenMime });
+        recorder.ondataavailable = (ev) => {
+          if (!running) return;
+          if (!ev.data || ev.data.size === 0) return;
+          // Serialize chunk processing to avoid out-of-order publish/key messages.
+          inFlight = inFlight.then(() => handleChunk(ev.data)).catch((e) => {
             console.error(e);
             setStatus(`error: ${e.message || e}`);
-            await new Promise(r => setTimeout(r, 500));
-          }
-        }
+          });
+        };
+        recorder.onerror = (ev) => {
+          console.error(ev.error || ev);
+          setStatus(`recorder error: ${(ev.error && ev.error.message) || ev.message || ev}`);
+        };
+        recorder.start(ms);
       }
 
       async function startStreaming() {
@@ -217,24 +197,27 @@
         }
         mimeEl.textContent = `Recorder mimeType: ${chosenMime}`;
 
-        setStatus('recording');
-        loop();
+        const ms = Math.max(1000, Number(msEl.value || 5000));
+        setStatus(`recording (${ms}ms chunks)`);
+        startRecorder(ms);
       }
 
-      function stopStreaming() {
+      async function stopStreaming() {
         running = false;
         toggleBtn.textContent = 'Start';
         if (recorder && recorder.state !== 'inactive') {
           try { recorder.stop(); } catch {}
         }
         recorder = null;
+        // wait for last in-flight encrypt/upload/publish to finish
+        try { await inFlight; } catch {}
         if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
         mediaStream = null;
         setStatus('stopped');
       }
 
       toggleBtn.onclick = async () => {
-        if (running) stopStreaming();
+        if (running) await stopStreaming();
         else await startStreaming();
       };
 
