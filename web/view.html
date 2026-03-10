@@ -5,11 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>View</title>
     <style>
-      body { font-family: system-ui, sans-serif; margin: 16px; }
-      .box { padding: 12px; border: 1px solid #ddd; border-radius: 8px; }
-      code { background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }
-      img { width: 100%; max-width: 720px; border: 1px solid #ddd; border-radius: 8px; margin-top: 12px; }
-      .small { color: #666; font-size: 12px; }
+      :root { color-scheme: dark; }
+      body { font-family: system-ui, sans-serif; margin: 16px; background: #0b0e14; color: #e6edf3; }
+      .box { padding: 12px; border: 1px solid #2f3540; border-radius: 8px; background: #111826; }
+      .row { display: flex; gap: 16px; flex-wrap: wrap; }
+      .grid { display: grid; grid-template-columns: 1fr 420px; gap: 16px; align-items: start; }
+      @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+      code { background: #1a2233; color: #d2e0ff; padding: 2px 4px; border-radius: 4px; }
+      a { color: #7ab8ff; }
+      .small { color: #9aa7bd; font-size: 12px; }
+      button, input { font-size: 16px; background: #1a2233; color: #e6edf3; border: 1px solid #3a4354; border-radius: 6px; }
+      button { padding: 6px 10px; cursor: pointer; }
+      video, canvas, img { max-width: 100%; border: 1px solid #2f3540; border-radius: 8px; background: #000; }
+      .viewer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid #253043; }
     </style>
   </head>
   <body>
