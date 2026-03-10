@@ -30,9 +30,8 @@
       <div class="small" id="mime"></div>
       <div style="margin-top:10px;">
         <label>Chunk ms: <input id="ms" type="number" value="5000" min="1000" step="500" style="width:100px;"></label>
-        <button id="start">Start</button>
+        <button id="toggle">Start</button>
         <span class="small">(higher = smoother, more delay)</span>
-        <button id="stop" disabled>Stop</button>
       </div>
     </div>
 
@@ -62,8 +61,7 @@
       const mimeEl = document.querySelector('#mime');
       const vid = document.querySelector('#vid');
       const msEl = document.querySelector('#ms');
-      const startBtn = document.querySelector('#start');
-      const stopBtn = document.querySelector('#stop');
+      const toggleBtn = document.querySelector('#toggle');
 
       let mediaStream = null;
       let recorder = null;
@@ -203,11 +201,9 @@
         }
       }
 
-      startBtn.onclick = async () => {
-        if (running) return;
+      async function startStreaming() {
         running = true;
-        startBtn.disabled = true;
-        stopBtn.disabled = false;
+        toggleBtn.textContent = 'Stop';
 
         setStatus('starting camera…');
         await setupCamera();
@@ -216,20 +212,18 @@
         if (!chosenMime) {
           setStatus('error: no supported MediaRecorder mimeType (need WebM support)');
           running = false;
-          startBtn.disabled = false;
-          stopBtn.disabled = true;
+          toggleBtn.textContent = 'Start';
           return;
         }
         mimeEl.textContent = `Recorder mimeType: ${chosenMime}`;
 
         setStatus('recording');
         loop();
-      };
+      }
 
-      stopBtn.onclick = () => {
+      function stopStreaming() {
         running = false;
-        startBtn.disabled = false;
-        stopBtn.disabled = true;
+        toggleBtn.textContent = 'Start';
         if (recorder && recorder.state !== 'inactive') {
           try { recorder.stop(); } catch {}
         }
@@ -237,6 +231,11 @@
         if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
         mediaStream = null;
         setStatus('stopped');
+      }
+
+      toggleBtn.onclick = async () => {
+        if (running) stopStreaming();
+        else await startStreaming();
       };
 
       setStatus('ready');
