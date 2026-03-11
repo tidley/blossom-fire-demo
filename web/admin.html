@@ -235,7 +235,6 @@
               // New allow should immediately deliver latest decrypt metadata/key.
               await sendLatestToViewer(pub, { forceKey: true });
             }
-            renderViewers();
             await maybeRotateOnViewerChange();
           };
 
