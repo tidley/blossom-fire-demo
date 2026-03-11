@@ -97,6 +97,8 @@
       videoEl.src = URL.createObjectURL(ms);
       let sb = null;
       const queue = [];
+      const TARGET_BUFFER_SEC = 8;
+      let startedPlayback = false;
 
       ms.addEventListener('sourceopen', () => {
         if (!mseMime) return;
@@ -105,13 +107,38 @@
         // Use sequence mode so each appended chunk is treated as next-in-line
         // even if source timestamps restart/reset per recorded blob.
         sb.mode = 'sequence';
-        sb.addEventListener('updateend', pump);
+        sb.addEventListener('updateend', async () => {
+          pump();
+          await maybeStartPlayback();
+        });
         pump();
       });
 
       function enqueue(bytes) {
         queue.push(bytes);
         pump();
+      }
+
+      function bufferedAheadSec() {
+        try {
+          const b = videoEl.buffered;
+          if (!b || b.length === 0) return 0;
+          const end = b.end(b.length - 1);
+          const cur = Number.isFinite(videoEl.currentTime) ? videoEl.currentTime : 0;
+          return Math.max(0, end - cur);
+        } catch {
+          return 0;
+        }
+      }
+
+      async function maybeStartPlayback() {
+        if (startedPlayback) return;
+        if (bufferedAheadSec() < TARGET_BUFFER_SEC) return;
+        try {
+          await videoEl.play();
+          startedPlayback = true;
+          setStatus(`playing (buffer ~${Math.round(bufferedAheadSec())}s)`);
+        } catch {}
       }
 
       function pump() {
@@ -183,13 +210,20 @@
           const pt = await aesGcmDecrypt(keyBytes, iv, ct, { aadBytes: aad });
           enqueue(pt);
           appended.add(chunkId);
-          if (videoEl.paused) {
-            try { await videoEl.play(); } catch {}
-          }
+          await maybeStartPlayback();
         } catch {
           setStatus('have blob but not allowed (or wrong key)');
         }
       }
+
+      videoEl.addEventListener('waiting', () => {
+        const sec = Math.round(bufferedAheadSec());
+        setStatus(`buffering… (${sec}s buffered)`);
+      });
+      videoEl.addEventListener('playing', () => {
+        const sec = Math.round(bufferedAheadSec());
+        setStatus(`playing (${sec}s buffered)`);
+      });
 
       setStatus('requested access; waiting…');
     </script>
