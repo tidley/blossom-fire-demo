@@ -99,9 +99,10 @@
       let ms = null;
       let sb = null;
       const queue = [];
-      const TARGET_BUFFER_SEC = 8;
-      const REBUFFER_RESUME_SEC = 8;
+      const TARGET_BUFFER_SEC = 16;
+      const REBUFFER_RESUME_SEC = 12;
       let startedPlayback = false;
+      let hasPlayedOnce = false;
       let mseFailures = 0;
       let fallbackMode = false;
       let currentObjectUrl = null;
@@ -178,10 +179,12 @@
 
       async function maybeStartPlayback() {
         if (startedPlayback) return;
-        if (bufferedAheadSec() < TARGET_BUFFER_SEC) return;
+        const need = hasPlayedOnce ? REBUFFER_RESUME_SEC : TARGET_BUFFER_SEC;
+        if (bufferedAheadSec() < need) return;
         try {
           await videoEl.play();
           startedPlayback = true;
+          hasPlayedOnce = true;
           setStatus(`playing (buffer ~${Math.round(bufferedAheadSec())}s)`);
         } catch {}
       }
