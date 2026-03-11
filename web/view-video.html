@@ -99,8 +99,12 @@
       const queue = [];
       const TARGET_BUFFER_SEC = 8;
       let startedPlayback = false;
+      let mseFailures = 0;
+      let fallbackMode = false;
+      let currentObjectUrl = null;
 
       function resetPipeline(reason = 'reset') {
+        if (fallbackMode) return;
         try {
           if (sb && sb.updating) {
             try { sb.abort(); } catch {}
@@ -124,6 +128,30 @@
           });
           pump();
         }, { once: true });
+      }
+
+      async function playFallbackChunk(bytes, mime = 'video/webm') {
+        try {
+          if (currentObjectUrl) {
+            try { URL.revokeObjectURL(currentObjectUrl); } catch {}
+            currentObjectUrl = null;
+          }
+          const blob = new Blob([bytes], { type: mime });
+          currentObjectUrl = URL.createObjectURL(blob);
+          videoEl.src = currentObjectUrl;
+          await videoEl.play().catch(() => {});
+          setStatus('fallback mode: playing latest chunk');
+        } catch (e) {
+          setStatus(`fallback error: ${e.message || e}`);
+        }
+      }
+
+      async function handleDecodedChunk(bytes, mime = 'video/webm') {
+        if (fallbackMode) {
+          await playFallbackChunk(bytes, mime);
+          return;
+        }
+        enqueue(bytes);
       }
 
       resetPipeline('init');
@@ -169,7 +197,13 @@
             msg.includes('is not, or is no longer, usable') ||
             msg.includes('Timecode element must appear before any Block')
           ) {
-            resetPipeline('pipeline recovered');
+            mseFailures += 1;
+            if (mseFailures >= 3) {
+              fallbackMode = true;
+              setStatus('switching to fallback mode (latest chunk playback)');
+            } else {
+              resetPipeline('pipeline recovered');
+            }
           }
         }
       }
@@ -232,7 +266,9 @@
 
         const plain = (k?.enc === 'none') || (a?.enc === 'none');
         if (plain) {
-          enqueue(payload);
+          const mime = k?.mime || a?.mime || 'video/webm';
+          await handleDecodedChunk(payload, mime);
+          mseFailures = 0;
           appended.add(chunkId);
           await maybeStartPlayback();
           return true;
@@ -246,7 +282,9 @@
 
         try {
           const pt = await aesGcmDecrypt(keyBytes, iv, ct, { aadBytes: aad });
-          enqueue(pt);
+          const mime = k?.mime || a?.mime || 'video/webm';
+          await handleDecodedChunk(pt, mime);
+          mseFailures = 0;
           appended.add(chunkId);
           await maybeStartPlayback();
           return true;
