@@ -29,7 +29,7 @@
       <div>Status: <span id="status">idle</span></div>
       <div class="small" id="mime"></div>
       <div style="margin-top:10px;">
-        <label>Chunk ms: <input id="ms" type="number" value="5000" min="1000" step="500" style="width:100px;"></label>
+        <label>Chunk ms: <input id="ms" type="number" value="2000" min="500" step="250" style="width:100px;"></label>
         <button id="toggle">Start</button>
         <span class="small">(higher = smoother, more delay)</span>
       </div>
@@ -70,7 +70,6 @@
       let chosenMime = null;
       let inFlight = Promise.resolve();
       let flushTimer = null;
-      let segmentTimer = null;
       let watchdogTimer = null;
       let emittedChunks = 0;
       let lastEmitAt = 0;
@@ -184,26 +183,10 @@
           setStatus(`recorder error: ${(ev.error && ev.error.message) || ev.message || ev}`);
         };
         recorder.onstart = () => setStatus(`recording (${ms}ms chunks)`);
-        recorder.onstop = () => { if (running) setStatus('recorder boundary stop'); };
 
-        // Start without timeslice; force deterministic chunk boundaries by stop/start cycling.
-        recorder.start();
+        // Continuous recorder with timeslice is smoother than stop/start chunk boundaries.
+        recorder.start(ms);
         lastEmitAt = Date.now();
-
-        if (segmentTimer) clearInterval(segmentTimer);
-        segmentTimer = setInterval(() => {
-          try {
-            if (!running || !recorder) return;
-            if (recorder.state === 'recording') {
-              recorder.stop();
-              setTimeout(() => {
-                try {
-                  if (running && recorder && recorder.state === 'inactive') recorder.start();
-                } catch {}
-              }, 25);
-            }
-          } catch {}
-        }, Math.max(1000, ms));
 
         // Compatibility flush as backup.
         if (flushTimer) clearInterval(flushTimer);
@@ -255,7 +238,6 @@
         }
         recorder = null;
         if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
-        if (segmentTimer) { clearInterval(segmentTimer); segmentTimer = null; }
         if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null; }
         // wait for last in-flight encrypt/upload/publish to finish
         try { await inFlight; } catch {}

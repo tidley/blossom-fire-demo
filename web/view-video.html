@@ -61,6 +61,7 @@
       const appended = new Set();
       let currentKeyB64 = null;
       let currentKeyId = null;
+      let expectedChunkId = 0;
 
       function setStatus(s) { statusEl.textContent = s; }
 
@@ -215,14 +216,14 @@
         } catch {}
       });
 
-      async function tryAppend(chunkId) {
-        if (appended.has(chunkId)) return;
+      async function appendOne(chunkId) {
+        if (appended.has(chunkId)) return false;
         const k = keys.get(chunkId);
         const a = announced.get(chunkId);
-        if (!k) return;
+        if (!k) return false; // access control: require admin viewerkey for each chunk
 
         const blobHash = k?.blobHash || a?.blobHash;
-        if (!blobHash) return;
+        if (!blobHash) return false;
         const payload = await blobFetch(blobHash);
 
         const plain = (k?.enc === 'none') || (a?.enc === 'none');
@@ -230,10 +231,10 @@
           enqueue(payload);
           appended.add(chunkId);
           await maybeStartPlayback();
-          return;
+          return true;
         }
 
-        if (!k || !k.keyB64) return;
+        if (!k.keyB64) return false;
         const iv = payload.slice(0, 12);
         const ct = payload.slice(12);
         const keyBytes = b64decode(k.keyB64);
@@ -244,14 +245,25 @@
           enqueue(pt);
           appended.add(chunkId);
           await maybeStartPlayback();
+          return true;
         } catch (e) {
           const msg = String((e && e.message) || e || '');
           if (msg.includes('Timecode element must appear before any Block')) {
             resetPipeline('decoder resync');
             setStatus('decoder resyncing…');
-            return;
+            return false;
           }
           setStatus('have blob but not allowed (or wrong key)');
+          return false;
+        }
+      }
+
+      async function tryAppend(_chunkId) {
+        // Append strictly in-order for smoother MSE playback.
+        while (true) {
+          const progressed = await appendOne(expectedChunkId);
+          if (!progressed) break;
+          expectedChunkId += 1;
         }
       }
 
