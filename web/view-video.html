@@ -7,8 +7,13 @@
     <style>
       :root { color-scheme: dark; }
       body { font-family: system-ui, sans-serif; margin: 16px; background: #0b0e14; color: #e6edf3; }
-      .box { padding: 12px; border: 1px solid #2f3540; border-radius: 8px; background: #111826; }
-      .row { display: flex; gap: 16px; flex-wrap: wrap; }
+      .box { padding: 12px; border: 1px solid #2f3540; border-radius: 10px; background: #111826; }
+      .row { display: flex; gap: 12px; flex-wrap: wrap; }
+      .meta { display: grid; gap: 8px; }
+      .kv { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+      .label { color: #9aa7bd; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+      .value { font-weight: 600; }
+      .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; border:1px solid #38445c; background:#1a2233; }
       .grid { display: grid; grid-template-columns: 1fr 420px; gap: 16px; align-items: start; }
       @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
       code { background: #1a2233; color: #d2e0ff; padding: 2px 4px; border-radius: 4px; }
@@ -22,12 +27,12 @@
   </head>
   <body>
     <h2>Viewer (near-live video)</h2>
-    <div class="box">
-      <div>Stream: <code id="stream"></code></div>
-      <div>Your npub: <code id="npub"></code></div>
-      <div>Status: <span id="status">starting…</span></div>
-      <div>Buffer: <span id="bufferSec">0.0s</span></div>
-      <div class="small">Auto-generates nostr keypair and auto-requests access.</div>
+    <div class="box meta">
+      <div class="kv"><span class="label">Stream</span><span class="value"><code id="stream"></code></span></div>
+      <div class="kv"><span class="label">Viewer npub</span><span class="value"><code id="npubShort"></code></span></div>
+      <div class="kv"><span class="label">Status</span><span class="value"><span class="pill" id="status">starting…</span></span></div>
+      <div class="kv"><span class="label">Buffer Remaining</span><span class="value" id="bufferSec">0.0s</span></div>
+      <div class="small">Access request is sent automatically on load.</div>
     </div>
 
     <video id="v" controls autoplay playsinline muted></video>
@@ -52,7 +57,8 @@
       document.querySelector('#stream').textContent = streamId;
 
       const viewer = getOrCreateViewerKeypair('demo.viewer.sk');
-      document.querySelector('#npub').textContent = viewer.npub;
+      const shortNpub = `${viewer.npub.slice(0, 14)}…${viewer.npub.slice(-6)}`;
+      document.querySelector('#npubShort').textContent = shortNpub;
 
       const statusEl = document.querySelector('#status');
       const bufferEl = document.querySelector('#bufferSec');
