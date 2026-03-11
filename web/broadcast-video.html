@@ -70,7 +70,6 @@
       let chosenMime = null;
       let inFlight = Promise.resolve();
       let chunkMs = 2000;
-      let requestDataTimer = null;
 
       // Keep decrypt key stable until admin indicates viewer list changed.
       let currentKey = randKey32();
@@ -198,14 +197,7 @@
           console.error(ev.error || ev);
           setStatus(`recorder error: ${(ev.error && ev.error.message) || ev.message || ev}`);
         };
-
-        // Start continuous recording and force periodic flushes.
-        recorder.start();
-        requestDataTimer = setInterval(() => {
-          try {
-            if (running && recorder && recorder.state === 'recording') recorder.requestData();
-          } catch {}
-        }, ms);
+        recorder.start(ms);
       }
 
       async function startStreaming() {
@@ -232,10 +224,6 @@
       async function stopStreaming() {
         running = false;
         toggleBtn.textContent = 'Start';
-        if (requestDataTimer) {
-          clearInterval(requestDataTimer);
-          requestDataTimer = null;
-        }
         if (recorder && recorder.state !== 'inactive') {
           try { recorder.stop(); } catch {}
         }
