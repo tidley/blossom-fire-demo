@@ -26,6 +26,7 @@
       <div>Stream: <code id="stream"></code></div>
       <div>Your npub: <code id="npub"></code></div>
       <div>Status: <span id="status">starting…</span></div>
+      <div>Buffer: <span id="bufferSec">0.0s</span></div>
       <div class="small">Auto-generates nostr keypair and auto-requests access.</div>
     </div>
 
@@ -54,6 +55,7 @@
       document.querySelector('#npub').textContent = viewer.npub;
 
       const statusEl = document.querySelector('#status');
+      const bufferEl = document.querySelector('#bufferSec');
       const videoEl = document.querySelector('#v');
 
       const keys = new Map();      // chunkId -> { keyB64, blobHash, mime }
@@ -175,6 +177,11 @@
         } catch {
           return 0;
         }
+      }
+
+      function updateBufferUi() {
+        const sec = bufferedAheadSec();
+        bufferEl.textContent = `${sec.toFixed(1)}s`;
       }
 
       async function maybeStartPlayback() {
@@ -350,6 +357,9 @@
         const sec = Math.round(bufferedAheadSec());
         setStatus(`playing (${sec}s buffered)`);
       });
+
+      setInterval(updateBufferUi, 500);
+      updateBufferUi();
 
       setStatus('requested access; waiting…');
     </script>

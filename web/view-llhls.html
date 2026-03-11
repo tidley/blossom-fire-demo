@@ -20,6 +20,7 @@
     <div class="box">
       <div>Stream: <code id="stream"></code></div>
       <div>Status: <span id="status">idle</span></div>
+      <div>Buffer: <span id="bufferSec">0.0s</span></div>
       <div class="row" style="margin-top:8px;">
         <label>Playlist URL</label>
         <input id="playlist" style="min-width:420px;" />
@@ -37,6 +38,7 @@
 
       const streamId = (getStreamId() || 'demo1').trim() || 'demo1';
       const statusEl = document.getElementById('status');
+      const bufferEl = document.getElementById('bufferSec');
       const video = document.getElementById('v');
       const playlistInput = document.getElementById('playlist');
       const legacyLink = document.getElementById('legacyLink');
@@ -48,6 +50,20 @@
       playlistInput.value = `${location.origin}/hls/${encodeURIComponent(streamId)}/index.m3u8`;
 
       function setStatus(s) { statusEl.textContent = s; }
+      function bufferedAheadSec() {
+        try {
+          const b = video.buffered;
+          if (!b || b.length === 0) return 0;
+          const end = b.end(b.length - 1);
+          const cur = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+          return Math.max(0, end - cur);
+        } catch {
+          return 0;
+        }
+      }
+      function updateBufferUi() {
+        bufferEl.textContent = `${bufferedAheadSec().toFixed(1)}s`;
+      }
 
       async function loadViaNativeOrHlsJs(url) {
         const canNative = video.canPlayType('application/vnd.apple.mpegurl');
@@ -95,6 +111,8 @@
         }
       };
 
+      setInterval(updateBufferUi, 500);
+      updateBufferUi();
       setStatus('ready');
     </script>
   </body>
