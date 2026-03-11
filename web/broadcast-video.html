@@ -71,6 +71,8 @@
       let inFlight = Promise.resolve();
       let chunkMs = 2000;
       let requestDataTimer = null;
+      let watchdogTimer = null;
+      let lastChunkAt = 0;
 
       // Keep decrypt key stable until admin indicates viewer list changed.
       let currentKey = randKey32();
@@ -185,9 +187,12 @@
 
       function startRecorder(ms) {
         recorder = new MediaRecorder(mediaStream, { mimeType: chosenMime });
+        lastChunkAt = Date.now();
+
         recorder.ondataavailable = (ev) => {
           if (!running) return;
           if (!ev.data || ev.data.size === 0) return;
+          lastChunkAt = Date.now();
           // Serialize chunk processing to avoid out-of-order publish/key messages.
           inFlight = inFlight.then(() => handleChunk(ev.data)).catch((e) => {
             console.error(e);
@@ -206,6 +211,23 @@
             if (running && recorder && recorder.state === 'recording') recorder.requestData();
           } catch {}
         }, ms);
+
+        // Fallback: if no chunk arrives, force a stop/start flush.
+        watchdogTimer = setInterval(() => {
+          try {
+            if (!running || !recorder) return;
+            const silentFor = Date.now() - lastChunkAt;
+            if (silentFor > ms * 2 && recorder.state === 'recording') {
+              setStatus(`recorder stalled (${silentFor}ms), forcing flush…`);
+              recorder.stop();
+              setTimeout(() => {
+                try {
+                  if (running && recorder && recorder.state === 'inactive') recorder.start();
+                } catch {}
+              }, 40);
+            }
+          } catch {}
+        }, Math.max(500, Math.floor(ms / 2)));
       }
 
       async function startStreaming() {
@@ -235,6 +257,10 @@
         if (requestDataTimer) {
           clearInterval(requestDataTimer);
           requestDataTimer = null;
+        }
+        if (watchdogTimer) {
+          clearInterval(watchdogTimer);
+          watchdogTimer = null;
         }
         if (recorder && recorder.state !== 'inactive') {
           try { recorder.stop(); } catch {}
