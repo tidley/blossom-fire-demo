@@ -73,22 +73,30 @@
 
       function setStatus(s) { statusEl.textContent = s; }
 
+      const adminPub = pubkeyFromSk(skFromHex(ADMIN_SK_HEX));
+
+      async function sendAccessHeartbeat() {
+        try {
+          const dm = await nip17WrapJson(viewer.sk, adminPub, {
+            type: 'access_req',
+            streamId,
+            role: 'viewer-video',
+            heartbeat: true,
+            ts: Math.floor(Date.now() / 1000),
+            v: 1,
+          });
+          await publish(dm);
+        } catch {}
+      }
+
       // Auto-request access (kind1 + NIP-17 fallback)
       const req = makeSignedEventUnsigned(1, viewer.sk, {
         content: 'request-video',
         tags: [ ['t', TAG_REQ], ['d', streamId] ]
       });
       await publish(req);
-      try {
-        const adminPub = pubkeyFromSk(skFromHex(ADMIN_SK_HEX));
-        const dm = await nip17WrapJson(viewer.sk, adminPub, {
-          type: 'access_req',
-          streamId,
-          role: 'viewer-video',
-          v: 1,
-        });
-        await publish(dm);
-      } catch {}
+      await sendAccessHeartbeat();
+      setInterval(sendAccessHeartbeat, 5000);
       setStatus('requested access; waiting for video keys…');
 
       // MSE setup

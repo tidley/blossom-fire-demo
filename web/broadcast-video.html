@@ -72,6 +72,7 @@
       let flushTimer = null;
       let segmentTimer = null;
       let watchdogTimer = null;
+      let keyRotateTimer = null;
       let emittedChunks = 0;
       let lastEmitAt = 0;
 
@@ -245,6 +246,12 @@
         const ms = Math.max(1000, Number(msEl.value || 5000));
         setStatus(`recording (${ms}ms chunks)`);
         startRecorder(ms);
+
+        if (keyRotateTimer) clearInterval(keyRotateTimer);
+        keyRotateTimer = setInterval(() => {
+          if (!running) return;
+          rotateKey('periodic-10s');
+        }, 10000);
       }
 
       async function stopStreaming() {
@@ -257,6 +264,7 @@
         if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
         if (segmentTimer) { clearInterval(segmentTimer); segmentTimer = null; }
         if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null; }
+        if (keyRotateTimer) { clearInterval(keyRotateTimer); keyRotateTimer = null; }
         // wait for last in-flight encrypt/upload/publish to finish
         try { await inFlight; } catch {}
         if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
