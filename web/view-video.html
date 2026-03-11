@@ -85,6 +85,8 @@
 
       // MSE setup
       const mimeCandidates = [
+        'video/webm; codecs="vp8"',
+        'video/webm; codecs="vp9"',
         'video/webm; codecs="vp8,opus"',
         'video/webm; codecs="vp9,opus"',
         'video/webm'
@@ -332,6 +334,10 @@
 
       videoEl.addEventListener('waiting', () => {
         const sec = Math.round(bufferedAheadSec());
+        if (fallbackMode) {
+          setStatus(`fallback mode: waiting for next chunk (${sec}s buffered)`);
+          return;
+        }
         setStatus(`buffering… (${sec}s buffered)`);
       });
       videoEl.addEventListener('playing', () => {
