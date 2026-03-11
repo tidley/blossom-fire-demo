@@ -1,4 +1,10 @@
 demo.tomdwyer.uk {
+  @hls path /hls/*
+  handle @hls {
+    root * /srv/hls
+    file_server
+  }
+
   root * /srv/web
   file_server
 }
