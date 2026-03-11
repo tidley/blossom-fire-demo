@@ -93,26 +93,39 @@
         setStatus('error: browser does not support MSE WebM');
       }
 
-      const ms = new MediaSource();
-      videoEl.src = URL.createObjectURL(ms);
+      let ms = null;
       let sb = null;
       const queue = [];
       const TARGET_BUFFER_SEC = 8;
       let startedPlayback = false;
 
-      ms.addEventListener('sourceopen', () => {
-        if (!mseMime) return;
-        if (sb) return;
-        sb = ms.addSourceBuffer(mseMime);
-        // Use sequence mode so each appended chunk is treated as next-in-line
-        // even if source timestamps restart/reset per recorded blob.
-        sb.mode = 'sequence';
-        sb.addEventListener('updateend', async () => {
+      function resetPipeline(reason = 'reset') {
+        try {
+          if (sb && sb.updating) {
+            try { sb.abort(); } catch {}
+          }
+        } catch {}
+        sb = null;
+        queue.length = 0;
+        startedPlayback = false;
+        ms = new MediaSource();
+        videoEl.src = URL.createObjectURL(ms);
+        setStatus(`${reason}… waiting for next chunks`);
+
+        ms.addEventListener('sourceopen', () => {
+          if (!mseMime) return;
+          if (sb) return;
+          sb = ms.addSourceBuffer(mseMime);
+          sb.mode = 'sequence';
+          sb.addEventListener('updateend', async () => {
+            pump();
+            await maybeStartPlayback();
+          });
           pump();
-          await maybeStartPlayback();
-        });
-        pump();
-      });
+        }, { once: true });
+      }
+
+      resetPipeline('init');
 
       function enqueue(bytes) {
         queue.push(bytes);
@@ -145,7 +158,15 @@
         if (!sb || sb.updating) return;
         if (queue.length === 0) return;
         const next = queue.shift();
-        try { sb.appendBuffer(next); } catch (e) { console.error(e); }
+        try {
+          sb.appendBuffer(next);
+        } catch (e) {
+          console.error(e);
+          const msg = String((e && e.message) || e || '');
+          if (msg.includes('no longer usable') || msg.includes('is not, or is no longer, usable')) {
+            resetPipeline('pipeline recovered');
+          }
+        }
       }
 
       // Subscribe to chunk announcements
@@ -211,7 +232,13 @@
           enqueue(pt);
           appended.add(chunkId);
           await maybeStartPlayback();
-        } catch {
+        } catch (e) {
+          const msg = String((e && e.message) || e || '');
+          if (msg.includes('Timecode element must appear before any Block')) {
+            resetPipeline('decoder resync');
+            setStatus('decoder resyncing…');
+            return;
+          }
           setStatus('have blob but not allowed (or wrong key)');
         }
       }
