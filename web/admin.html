@@ -89,19 +89,26 @@
         'video/webm',
       ];
       const previewMseMime = videoMimeCandidates.find(m => MediaSource.isTypeSupported(m));
-      const previewMs = new MediaSource();
+      let previewMs = null;
       let previewSb = null;
       const previewQueue = [];
-      previewVideoEl.src = URL.createObjectURL(previewMs);
-      previewMs.addEventListener('sourceopen', () => {
-        if (!previewMseMime || previewSb) return;
-        previewSb = previewMs.addSourceBuffer(previewMseMime);
-        // Sequence mode is more tolerant when each chunk is an independently
-        // recorded WebM fragment with local timestamps.
-        previewSb.mode = 'sequence';
-        previewSb.addEventListener('updateend', pumpPreview);
-        pumpPreview();
-      });
+
+      function resetPreviewPipeline(reason = 'preview reset') {
+        previewSb = null;
+        previewMs = new MediaSource();
+        previewVideoEl.src = URL.createObjectURL(previewMs);
+        setStatus(`${reason}…`);
+
+        previewMs.addEventListener('sourceopen', () => {
+          if (!previewMseMime || previewSb) return;
+          previewSb = previewMs.addSourceBuffer(previewMseMime);
+          // Sequence mode is more tolerant when each chunk is an independently
+          // recorded WebM fragment with local timestamps.
+          previewSb.mode = 'sequence';
+          previewSb.addEventListener('updateend', pumpPreview);
+          pumpPreview();
+        }, { once: true });
+      }
 
       function enqueuePreview(bytes) {
         previewQueue.push(bytes);
@@ -112,8 +119,18 @@
         if (!previewSb || previewSb.updating) return;
         if (previewQueue.length === 0) return;
         const next = previewQueue.shift();
-        try { previewSb.appendBuffer(next); } catch (e) { console.error(e); }
+        try {
+          previewSb.appendBuffer(next);
+        } catch (e) {
+          console.error(e);
+          const msg = String((e && e.message) || e || '');
+          if (msg.includes('no longer usable') || msg.includes('is not, or is no longer, usable')) {
+            resetPreviewPipeline('preview pipeline recovered');
+          }
+        }
       }
+
+      resetPreviewPipeline('preview init');
 
       function setStatus(s) { statusEl.textContent = s; }
 
@@ -161,15 +178,16 @@
         const latest = getLatestFrame();
         if (!latest) return;
         const { frameId, rec } = latest;
-        const includeKey = forceKey || lastSentKeyIdByViewer.get(viewerPub) !== rec.keyId;
+        const isPlain = !!rec.plain;
+        const includeKey = !isPlain && (forceKey || lastSentKeyIdByViewer.get(viewerPub) !== rec.keyId);
         const dm = await nip17WrapJson(adminSk, viewerPub, {
           type: 'viewerkey',
           streamId,
           frameId,
           x: rec.blobHash,
-          ...(includeKey ? { k: b64encode(rec.keyBytes), key_id: rec.keyId } : { key_id: rec.keyId }),
+          ...(isPlain ? { key_id: rec.keyId, enc: 'none', alg: 'none' } : (includeKey ? { k: b64encode(rec.keyBytes), key_id: rec.keyId } : { key_id: rec.keyId })),
           m: rec.mime,
-          alg: 'aes-gcm',
+          alg: isPlain ? 'none' : 'aes-gcm',
           v: 1,
         });
         lastSentKeyIdByViewer.set(viewerPub, rec.keyId);
