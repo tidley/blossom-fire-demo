@@ -100,6 +100,7 @@
       let sb = null;
       const queue = [];
       const TARGET_BUFFER_SEC = 8;
+      const REBUFFER_RESUME_SEC = 8;
       let startedPlayback = false;
       let mseFailures = 0;
       let fallbackMode = false;
@@ -338,6 +339,8 @@
           setStatus(`fallback mode: waiting for next chunk (${sec}s buffered)`);
           return;
         }
+        // Gate resume until we have enough headroom again.
+        startedPlayback = false;
         setStatus(`buffering… (${sec}s buffered)`);
       });
       videoEl.addEventListener('playing', () => {
