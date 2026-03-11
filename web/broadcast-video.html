@@ -100,17 +100,17 @@
       });
 
       async function setupCamera() {
-        mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
         vid.srcObject = mediaStream;
         await vid.play();
       }
 
       function pickMime() {
         const candidates = [
-          'video/webm;codecs=vp8',
-          'video/webm;codecs=vp9',
           'video/webm;codecs=vp8,opus',
           'video/webm;codecs=vp9,opus',
+          'video/webm;codecs=vp8',
+          'video/webm;codecs=vp9',
           'video/webm',
         ];
         for (const m of candidates) {
