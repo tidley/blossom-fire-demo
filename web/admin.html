@@ -261,7 +261,6 @@
               frameId,
               x: blobHash,
               ...(includeKey ? { k: msg.k, key_id: keyId } : { key_id: keyId }),
-              ...(msg.init ? { init: true } : {}),
               m: mime,
               alg: msg.alg || 'aes-gcm',
               v: 1,
