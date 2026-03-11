@@ -50,7 +50,7 @@
     <script type="module">
       import { TAG_REQ, ADMIN_SK_HEX } from './config.js';
       import { blobFetch } from './blob.js';
-      import { aesGcmDecrypt, b64decode, utf8Bytes } from './crypto.js';
+      import { aesGcmDecrypt, b64decode, b64encode, utf8Bytes } from './crypto.js';
       import {
         getStreamId,
         skFromHex,
@@ -149,6 +149,33 @@
         await notifyBroadcastersRotate();
       }
 
+      function getLatestFrame() {
+        let best = null;
+        for (const [frameId, rec] of adminFrameKeys.entries()) {
+          if (!best || frameId > best.frameId) best = { frameId, rec };
+        }
+        return best;
+      }
+
+      async function sendLatestToViewer(viewerPub, { forceKey = false } = {}) {
+        const latest = getLatestFrame();
+        if (!latest) return;
+        const { frameId, rec } = latest;
+        const includeKey = forceKey || lastSentKeyIdByViewer.get(viewerPub) !== rec.keyId;
+        const dm = await nip17WrapJson(adminSk, viewerPub, {
+          type: 'viewerkey',
+          streamId,
+          frameId,
+          x: rec.blobHash,
+          ...(includeKey ? { k: b64encode(rec.keyBytes), key_id: rec.keyId } : { key_id: rec.keyId }),
+          m: rec.mime,
+          alg: 'aes-gcm',
+          v: 1,
+        });
+        lastSentKeyIdByViewer.set(viewerPub, rec.keyId);
+        publish(dm);
+      }
+
       function renderViewers() {
         viewersEl.innerHTML = '';
         const entries = Array.from(viewers.entries())
@@ -171,7 +198,12 @@
             v.allowed = cb.checked;
             v.lastSeen = Math.floor(Date.now()/1000);
             viewers.set(pub, v);
-            if (!v.allowed) lastSentKeyIdByViewer.delete(pub);
+            if (!v.allowed) {
+              lastSentKeyIdByViewer.delete(pub);
+            } else {
+              // New allow should immediately deliver latest decrypt metadata/key.
+              await sendLatestToViewer(pub, { forceKey: true });
+            }
             await maybeRotateOnViewerChange();
           };
 
