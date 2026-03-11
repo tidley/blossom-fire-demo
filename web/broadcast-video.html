@@ -250,8 +250,8 @@
         if (keyRotateTimer) clearInterval(keyRotateTimer);
         keyRotateTimer = setInterval(() => {
           if (!running) return;
-          rotateKey('periodic-10s');
-        }, 10000);
+          rotateKey('periodic-60s');
+        }, 60000);
       }
 
       async function stopStreaming() {
