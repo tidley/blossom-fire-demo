@@ -29,9 +29,9 @@
       <div>Status: <span id="status">idle</span></div>
       <div class="small" id="mime"></div>
       <div style="margin-top:10px;">
-        <label>Chunk ms: <input id="ms" type="number" value="5000" min="1000" step="500" style="width:100px;"></label>
+        <label>Chunk ms: <input id="ms" type="number" value="2000" min="500" step="250" style="width:100px;"></label>
         <button id="toggle">Start</button>
-        <span class="small">(higher = smoother, more delay)</span>
+        <span class="small">(lower = less pause between chunks, higher = smoother + more delay)</span>
       </div>
     </div>
 
@@ -69,6 +69,9 @@
       let running = false;
       let chosenMime = null;
       let inFlight = Promise.resolve();
+      let pendingInit = true;
+      let chunksSinceRestart = 0;
+      const RESTART_EVERY_CHUNKS = 4; // periodic fresh init segment (~20s at 5s chunks)
 
       // Keep decrypt key stable until admin indicates viewer list changed.
       let currentKey = randKey32();
@@ -95,7 +98,7 @@
       });
 
       async function setupCamera() {
-        mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: true });
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
         vid.srcObject = mediaStream;
         await vid.play();
       }
@@ -129,6 +132,7 @@
 
           const hash = await blobUpload(payload);
 
+          const isInit = pendingInit;
           const ann = makeSignedEventUnsigned(1, broadcaster.sk, {
             content: '',
             tags: [
@@ -137,6 +141,7 @@
               ['i', String(chunkId)],
               ['x', hash],
               ['m', chosenMime || 'video/webm'],
+              ...(isInit ? [['init', '1']] : []),
             ]
           });
           await publish(ann);
@@ -149,14 +154,33 @@
             x: hash,
             k: b64encode(key),
             key_id: keyId,
+            init: isInit,
             m: chosenMime || 'video/webm',
             alg: 'aes-gcm',
             v: 1,
           });
           await publish(dm);
 
-          setStatus(`sent chunk ${chunkId} → ${hash.slice(0,8)}… (${blob.size} bytes, key ${keyId})`);
+          setStatus(`sent chunk ${chunkId}${isInit ? ' [init]' : ''} → ${hash.slice(0,8)}… (${blob.size} bytes, key ${keyId})`);
           chunkId++;
+          pendingInit = false;
+          chunksSinceRestart++;
+
+          if (recorder && recorder.state === 'recording' && chunksSinceRestart >= RESTART_EVERY_CHUNKS) {
+            chunksSinceRestart = 0;
+            pendingInit = true;
+            try {
+              recorder.stop();
+              setTimeout(() => {
+                try {
+                  if (running && recorder && recorder.state === 'inactive') {
+                    const ms = Math.max(500, Number(msEl.value || 2000));
+                    recorder.start(ms);
+                  }
+                } catch {}
+              }, 25);
+            } catch {}
+          }
         } catch (e) {
           console.error(e);
           setStatus(`error: ${e.message || e}`);
@@ -197,7 +221,7 @@
         }
         mimeEl.textContent = `Recorder mimeType: ${chosenMime}`;
 
-        const ms = Math.max(1000, Number(msEl.value || 5000));
+        const ms = Math.max(500, Number(msEl.value || 2000));
         setStatus(`recording (${ms}ms chunks)`);
         startRecorder(ms);
       }

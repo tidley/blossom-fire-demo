@@ -93,26 +93,35 @@
         setStatus('error: browser does not support MSE WebM');
       }
 
-      const ms = new MediaSource();
-      videoEl.src = URL.createObjectURL(ms);
+      let ms = null;
       let sb = null;
       const queue = [];
       const TARGET_BUFFER_SEC = 8;
       let startedPlayback = false;
 
-      ms.addEventListener('sourceopen', () => {
-        if (!mseMime) return;
-        if (sb) return;
-        sb = ms.addSourceBuffer(mseMime);
-        // Use sequence mode so each appended chunk is treated as next-in-line
-        // even if source timestamps restart/reset per recorded blob.
-        sb.mode = 'sequence';
-        sb.addEventListener('updateend', async () => {
+      function initMediaPipeline() {
+        ms = new MediaSource();
+        sb = null;
+        startedPlayback = false;
+        queue.length = 0;
+        videoEl.src = URL.createObjectURL(ms);
+
+        ms.addEventListener('sourceopen', () => {
+          if (!mseMime) return;
+          if (sb) return;
+          sb = ms.addSourceBuffer(mseMime);
+          // Use sequence mode so each appended chunk is treated as next-in-line
+          // even if source timestamps restart/reset per recorded blob.
+          sb.mode = 'sequence';
+          sb.addEventListener('updateend', async () => {
+            pump();
+            await maybeStartPlayback();
+          });
           pump();
-          await maybeStartPlayback();
         });
-        pump();
-      });
+      }
+
+      initMediaPipeline();
 
       function enqueue(bytes) {
         queue.push(bytes);
@@ -184,7 +193,8 @@
           keys.set(Number(msg.frameId), {
             keyB64: msg.k || currentKeyB64,
             blobHash: msg.x,
-            mime: msg.m || 'video/webm'
+            mime: msg.m || 'video/webm',
+            init: !!msg.init,
           });
           setStatus(`allowed; got key meta for chunk ${msg.frameId}${currentKeyId ? ` (${currentKeyId})` : ''}`);
           await tryAppend(Number(msg.frameId));
@@ -208,6 +218,12 @@
 
         try {
           const pt = await aesGcmDecrypt(keyBytes, iv, ct, { aadBytes: aad });
+
+          if (k.init) {
+            // Start a fresh append chain at init boundaries to avoid decoder state issues.
+            initMediaPipeline();
+          }
+
           enqueue(pt);
           appended.add(chunkId);
           await maybeStartPlayback();
