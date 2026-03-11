@@ -70,6 +70,7 @@
       let chosenMime = null;
       let inFlight = Promise.resolve();
       let flushTimer = null;
+      let segmentTimer = null;
       let watchdogTimer = null;
       let emittedChunks = 0;
       let lastEmitAt = 0;
@@ -183,10 +184,26 @@
           setStatus(`recorder error: ${(ev.error && ev.error.message) || ev.message || ev}`);
         };
         recorder.onstart = () => setStatus(`recording (${ms}ms chunks)`);
+        recorder.onstop = () => { if (running) setStatus('recorder boundary stop'); };
 
-        // Continuous recorder with timeslice is smoother than stop/start chunk boundaries.
-        recorder.start(ms);
+        // Reliability mode: explicit chunk boundaries prevent malformed WebM clusters on some browsers.
+        recorder.start();
         lastEmitAt = Date.now();
+
+        if (segmentTimer) clearInterval(segmentTimer);
+        segmentTimer = setInterval(() => {
+          try {
+            if (!running || !recorder) return;
+            if (recorder.state === 'recording') {
+              recorder.stop();
+              setTimeout(() => {
+                try {
+                  if (running && recorder && recorder.state === 'inactive') recorder.start();
+                } catch {}
+              }, 30);
+            }
+          } catch {}
+        }, Math.max(1000, ms));
 
         // Compatibility flush as backup.
         if (flushTimer) clearInterval(flushTimer);
@@ -238,6 +255,7 @@
         }
         recorder = null;
         if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
+        if (segmentTimer) { clearInterval(segmentTimer); segmentTimer = null; }
         if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null; }
         // wait for last in-flight encrypt/upload/publish to finish
         try { await inFlight; } catch {}
