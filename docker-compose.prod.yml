@@ -9,6 +9,7 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./web:/srv/web:ro
+      - ./data/hls:/srv/web/hls
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
@@ -23,9 +24,11 @@ services:
     environment:
       PORT: "3000"
       BLOB_DIR: "/data/blobs"
+      HLS_DIR: "/data/hls"
     volumes:
       - ./blob:/app
       - ./data/blobs:/data/blobs
+      - ./data/hls:/data/hls
 
   relay:
     image: scsibug/nostr-rs-relay:latest

@@ -1,0 +1,148 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Broadcast LL-HLS (test)</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { font-family: system-ui, sans-serif; margin: 16px; background: #0b0e14; color: #e6edf3; }
+      .box { padding: 12px; border: 1px solid #2f3540; border-radius: 8px; background: #111826; margin-bottom: 12px; }
+      input, button { font-size: 15px; background: #1a2233; color: #e6edf3; border: 1px solid #3a4354; border-radius: 6px; padding: 6px 8px; }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+      video { width: 100%; max-width: 900px; border: 1px solid #2f3540; border-radius: 8px; background: #000; }
+      code { background: #1a2233; padding: 2px 4px; border-radius: 4px; }
+      a { color: #7ab8ff; }
+    </style>
+  </head>
+  <body>
+    <h2>Broadcast LL-HLS (test)</h2>
+    <div class="box">
+      <div>Stream: <code id="stream"></code></div>
+      <div>Status: <span id="status">idle</span></div>
+      <div id="mime" style="margin-top:6px;"></div>
+      <div class="row" style="margin-top:8px;">
+        <label>Chunk ms</label>
+        <input id="ms" type="number" value="1000" min="500" step="250" style="width:110px;" />
+        <button id="toggle">Start</button>
+      </div>
+      <div style="margin-top:8px;">
+        Viewer: <a id="viewerLink" href="#">view-llhls.html</a>
+      </div>
+    </div>
+
+    <video id="preview" autoplay playsinline muted></video>
+
+    <script type="module">
+      import { getStreamId } from './util.js';
+      import { BLOB_BASE } from './config.js';
+
+      const streamId = (getStreamId() || 'demo1').trim() || 'demo1';
+      const statusEl = document.getElementById('status');
+      const mimeEl = document.getElementById('mime');
+      const msEl = document.getElementById('ms');
+      const toggleBtn = document.getElementById('toggle');
+      const preview = document.getElementById('preview');
+      const viewerLink = document.getElementById('viewerLink');
+
+      document.getElementById('stream').textContent = streamId;
+      viewerLink.href = `/view-llhls.html?stream=${encodeURIComponent(streamId)}`;
+
+      let mediaStream = null;
+      let recorder = null;
+      let running = false;
+      let chosenMime = null;
+      let seq = 0;
+      let inFlight = Promise.resolve();
+
+      function setStatus(s) { statusEl.textContent = s; }
+
+      function pickMime() {
+        const candidates = [
+          'video/mp4;codecs=avc1.42E01E',
+          'video/mp4',
+        ];
+        for (const m of candidates) {
+          if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+        }
+        return null;
+      }
+
+      async function resetStream() {
+        const r = await fetch(`${BLOB_BASE}/hls/${encodeURIComponent(streamId)}/reset`, { method: 'POST' });
+        if (!r.ok) throw new Error(`reset failed: ${r.status}`);
+      }
+
+      async function uploadSegment(blob, durSec) {
+        const url = `${BLOB_BASE}/hls/${encodeURIComponent(streamId)}/segment?seq=${seq}&dur=${encodeURIComponent(durSec.toFixed(3))}`;
+        const r = await fetch(url, { method: 'POST', body: blob });
+        if (!r.ok) throw new Error(`segment upload failed: ${r.status}`);
+        const j = await r.json();
+        setStatus(`sent segment ${seq} (${blob.size} bytes)`);
+        seq += 1;
+        return j;
+      }
+
+      async function start() {
+        running = true;
+        toggleBtn.textContent = 'Stop';
+        setStatus('starting camera…');
+        seq = 0;
+
+        mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        preview.srcObject = mediaStream;
+        await preview.play();
+
+        chosenMime = pickMime();
+        if (!chosenMime) throw new Error('No MP4 MediaRecorder support in this browser for LL-HLS test page.');
+        mimeEl.textContent = `Recorder mimeType: ${chosenMime}`;
+
+        await resetStream();
+
+        const chunkMs = Math.max(500, Number(msEl.value || 1000));
+        recorder = new MediaRecorder(mediaStream, { mimeType: chosenMime });
+        recorder.ondataavailable = (ev) => {
+          if (!running || !ev.data || ev.data.size === 0) return;
+          inFlight = inFlight.then(() => uploadSegment(ev.data, chunkMs / 1000)).catch((e) => {
+            console.error(e);
+            setStatus(`error: ${e.message || e}`);
+          });
+        };
+        recorder.onerror = (ev) => {
+          console.error(ev.error || ev);
+          setStatus(`recorder error: ${(ev.error && ev.error.message) || ev.message || ev}`);
+        };
+
+        recorder.start(chunkMs);
+        setStatus(`recording LL-HLS (${chunkMs}ms segments)`);
+      }
+
+      async function stop() {
+        running = false;
+        toggleBtn.textContent = 'Start';
+        if (recorder && recorder.state !== 'inactive') {
+          try { recorder.stop(); } catch {}
+        }
+        recorder = null;
+        try { await inFlight; } catch {}
+        if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
+        mediaStream = null;
+        setStatus('stopped');
+      }
+
+      toggleBtn.onclick = async () => {
+        try {
+          if (running) await stop();
+          else await start();
+        } catch (e) {
+          console.error(e);
+          setStatus(`error: ${e.message || e}`);
+          running = false;
+          toggleBtn.textContent = 'Start';
+        }
+      };
+
+      setStatus('ready');
+    </script>
+  </body>
+</html>
