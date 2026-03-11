@@ -182,8 +182,10 @@
           const chunkId = Number(chunkIdTag[1]);
           const blobHash = blobTag[1];
           const mime = (mimeTag && mimeTag[1]) || 'video/webm';
+          const encTag = ev.tags.find(t => t[0] === 'enc');
+          const enc = (encTag && encTag[1]) || null;
 
-          announced.set(chunkId, { blobHash, mime });
+          announced.set(chunkId, { blobHash, mime, enc });
           await tryAppend(chunkId);
         } catch (e) {
           console.error(e);
@@ -205,7 +207,8 @@
           keys.set(Number(msg.frameId), {
             keyB64: msg.k || currentKeyB64,
             blobHash: msg.x,
-            mime: msg.m || 'video/webm'
+            mime: msg.m || 'video/webm',
+            enc: msg.enc || null,
           });
           setStatus(`allowed; got key meta for chunk ${msg.frameId}${currentKeyId ? ` (${currentKeyId})` : ''}`);
           await tryAppend(Number(msg.frameId));
@@ -218,10 +221,19 @@
         const a = announced.get(chunkId);
         if (!k) return;
 
-        const blobHash = k.blobHash || a?.blobHash;
+        const blobHash = k?.blobHash || a?.blobHash;
         if (!blobHash) return;
-        if (!k.keyB64) return;
         const payload = await blobFetch(blobHash);
+
+        const plain = (k?.enc === 'none') || (a?.enc === 'none');
+        if (plain) {
+          enqueue(payload);
+          appended.add(chunkId);
+          await maybeStartPlayback();
+          return;
+        }
+
+        if (!k || !k.keyB64) return;
         const iv = payload.slice(0, 12);
         const ct = payload.slice(12);
         const keyBytes = b64decode(k.keyB64);

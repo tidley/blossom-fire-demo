@@ -277,24 +277,25 @@
 
           const frameId = Number(msg.frameId);
           const blobHash = msg.x;
-          const keyBytes = b64decode(msg.k);
+          const isPlain = msg.enc === 'none' || msg.alg === 'none';
+          const keyBytes = isPlain ? null : b64decode(msg.k);
           const mime = msg.m || 'image/webp';
-          const keyId = msg.key_id || 'default';
+          const keyId = msg.key_id || (isPlain ? 'plain' : 'default');
 
-          adminFrameKeys.set(frameId, { keyBytes, blobHash, mime, keyId });
+          adminFrameKeys.set(frameId, { keyBytes, blobHash, mime, keyId, plain: isPlain });
 
           // Forward to allowed viewers immediately; include key only on key change per viewer.
           for (const [viewerPub, v] of viewers.entries()) {
             if (!v.allowed) continue;
-            const includeKey = lastSentKeyIdByViewer.get(viewerPub) !== keyId;
+            const includeKey = !isPlain && lastSentKeyIdByViewer.get(viewerPub) !== keyId;
             const dm = await nip17WrapJson(adminSk, viewerPub, {
               type: 'viewerkey',
               streamId,
               frameId,
               x: blobHash,
-              ...(includeKey ? { k: msg.k, key_id: keyId } : { key_id: keyId }),
+              ...(isPlain ? { key_id: keyId, enc: 'none', alg: 'none' } : (includeKey ? { k: msg.k, key_id: keyId } : { key_id: keyId })),
               m: mime,
-              alg: msg.alg || 'aes-gcm',
+              alg: isPlain ? 'none' : (msg.alg || 'aes-gcm'),
               v: 1,
             });
             lastSentKeyIdByViewer.set(viewerPub, keyId);
@@ -315,10 +316,14 @@
         const rec = adminFrameKeys.get(frameId);
         if (!rec) return;
         const payload = await blobFetch(rec.blobHash);
-        const iv = payload.slice(0, 12);
-        const ct = payload.slice(12);
-        const aad = utf8Bytes(`${streamId}:${frameId}`);
-        const pt = await aesGcmDecrypt(rec.keyBytes, iv, ct, { aadBytes: aad });
+        const pt = rec.plain
+          ? payload
+          : await (async () => {
+              const iv = payload.slice(0, 12);
+              const ct = payload.slice(12);
+              const aad = utf8Bytes(`${streamId}:${frameId}`);
+              return aesGcmDecrypt(rec.keyBytes, iv, ct, { aadBytes: aad });
+            })();
 
         if ((rec.mime || '').startsWith('video/')) {
           previewEl.style.display = 'none';

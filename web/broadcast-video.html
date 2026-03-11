@@ -45,7 +45,7 @@
     <script type="module">
       import { TAG_DEMO_VIDEO, ADMIN_SK_HEX } from './config.js';
       import { blobUpload } from './blob.js';
-      import { aesGcmEncrypt, randKey32, utf8Bytes, b64encode } from './crypto.js';
+      import { randKey32 } from './crypto.js';
       import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, sub, skFromHex, pubkeyFromSk, nip17WrapJson, nip17UnwrapJson } from './util.js';
 
       const streamId = (getStreamId() || 'demo1').trim() || 'demo1';
@@ -69,30 +69,20 @@
       let running = false;
       let chosenMime = null;
       let inFlight = Promise.resolve();
-      let chunkMs = 2000;
+      let flushTimer = null;
+      let segmentTimer = null;
+      let watchdogTimer = null;
+      let emittedChunks = 0;
+      let lastEmitAt = 0;
 
-      // Keep decrypt key stable until admin indicates viewer list changed.
+      // Simplified mode: plain video chunks (no per-chunk encryption)
       let currentKey = randKey32();
-      let keyId = `k-${Date.now()}`;
+      let keyId = `plain-${Date.now()}`;
 
       function rotateKey(reason = 'manual') {
         currentKey = randKey32();
         keyId = `k-${Date.now()}`;
         setStatus(`rotated key (${reason})`);
-      }
-
-      function restartRecorderForFreshBoundary() {
-        try {
-          if (!running || !recorder) return;
-          if (recorder.state === 'recording') {
-            recorder.stop();
-            setTimeout(() => {
-              try {
-                if (running && recorder && recorder.state === 'inactive') recorder.start(chunkMs);
-              } catch {}
-            }, 40);
-          }
-        } catch {}
       }
 
       function setStatus(s) { statusEl.textContent = s; }
@@ -105,11 +95,7 @@
           const { inner, msg } = nip17UnwrapJson(broadcaster.sk, ev);
           if (inner.pubkey !== adminPub) return;
           if (!msg || msg.streamId !== streamId) return;
-          if (msg.type === 'rotate_key') {
-            rotateKey(msg.reason || 'viewer-change');
-            // Force a recorder boundary so newly allowed viewers quickly get a decodable fresh segment chain.
-            restartRecorderForFreshBoundary();
-          }
+          if (msg.type === 'rotate_key') rotateKey(msg.reason || 'viewer-change');
         } catch {}
       });
 
@@ -121,6 +107,8 @@
 
       function pickMime() {
         const candidates = [
+          'video/webm;codecs=vp8',
+          'video/webm;codecs=vp9',
           'video/webm;codecs=vp8,opus',
           'video/webm;codecs=vp9,opus',
           'video/webm',
@@ -135,17 +123,9 @@
         if (!running) return;
         if (!blob || blob.size === 0) return;
         try {
+          setStatus(`processing chunk ${chunkId} (${blob.size} bytes)…`);
           const buf = await blob.arrayBuffer();
-          const plaintext = new Uint8Array(buf);
-
-          const key = currentKey;
-          const aad = utf8Bytes(`${streamId}:${chunkId}`);
-          const { iv, ciphertext } = await aesGcmEncrypt(key, plaintext, { aadBytes: aad });
-
-          const payload = new Uint8Array(iv.length + ciphertext.length);
-          payload.set(iv, 0);
-          payload.set(ciphertext, iv.length);
-
+          const payload = new Uint8Array(buf);
           const hash = await blobUpload(payload);
 
           const ann = makeSignedEventUnsigned(1, broadcaster.sk, {
@@ -156,6 +136,7 @@
               ['i', String(chunkId)],
               ['x', hash],
               ['m', chosenMime || 'video/webm'],
+              ['enc', 'none'],
             ]
           });
           await publish(ann);
@@ -166,10 +147,10 @@
             streamId,
             frameId: chunkId,
             x: hash,
-            k: b64encode(key),
             key_id: keyId,
             m: chosenMime || 'video/webm',
-            alg: 'aes-gcm',
+            enc: 'none',
+            alg: 'none',
             v: 1,
           });
           await publish(dm);
@@ -186,7 +167,12 @@
         recorder = new MediaRecorder(mediaStream, { mimeType: chosenMime });
         recorder.ondataavailable = (ev) => {
           if (!running) return;
-          if (!ev.data || ev.data.size === 0) return;
+          if (!ev.data || ev.data.size === 0) {
+            setStatus(`empty chunk emitted (state=${recorder?.state || 'n/a'})`);
+            return;
+          }
+          emittedChunks += 1;
+          lastEmitAt = Date.now();
           // Serialize chunk processing to avoid out-of-order publish/key messages.
           inFlight = inFlight.then(() => handleChunk(ev.data)).catch((e) => {
             console.error(e);
@@ -197,7 +183,47 @@
           console.error(ev.error || ev);
           setStatus(`recorder error: ${(ev.error && ev.error.message) || ev.message || ev}`);
         };
-        recorder.start(ms);
+        recorder.onstart = () => setStatus(`recording (${ms}ms chunks)`);
+        recorder.onstop = () => { if (running) setStatus('recorder boundary stop'); };
+
+        // Start without timeslice; force deterministic chunk boundaries by stop/start cycling.
+        recorder.start();
+        lastEmitAt = Date.now();
+
+        if (segmentTimer) clearInterval(segmentTimer);
+        segmentTimer = setInterval(() => {
+          try {
+            if (!running || !recorder) return;
+            if (recorder.state === 'recording') {
+              recorder.stop();
+              setTimeout(() => {
+                try {
+                  if (running && recorder && recorder.state === 'inactive') recorder.start();
+                } catch {}
+              }, 25);
+            }
+          } catch {}
+        }, Math.max(1000, ms));
+
+        // Compatibility flush as backup.
+        if (flushTimer) clearInterval(flushTimer);
+        flushTimer = setInterval(() => {
+          try {
+            if (running && recorder && recorder.state === 'recording') recorder.requestData();
+          } catch {}
+        }, Math.max(1200, ms));
+
+        if (watchdogTimer) clearInterval(watchdogTimer);
+        watchdogTimer = setInterval(() => {
+          if (!running) return;
+          const ageSec = Math.round((Date.now() - (lastEmitAt || Date.now())) / 1000);
+          if (ageSec > Math.max(8, Math.ceil(ms / 1000) * 3)) {
+            setStatus(`no non-empty chunks for ${ageSec}s (emitted=${emittedChunks})`);
+            try {
+              if (recorder && recorder.state === 'recording') recorder.requestData();
+            } catch {}
+          }
+        }, 2000);
       }
 
       async function startStreaming() {
@@ -216,9 +242,9 @@
         }
         mimeEl.textContent = `Recorder mimeType: ${chosenMime}`;
 
-        chunkMs = Math.max(500, Number(msEl.value || 2000));
-        setStatus(`recording (${chunkMs}ms chunks)`);
-        startRecorder(chunkMs);
+        const ms = Math.max(1000, Number(msEl.value || 5000));
+        setStatus(`recording (${ms}ms chunks)`);
+        startRecorder(ms);
       }
 
       async function stopStreaming() {
@@ -228,6 +254,9 @@
           try { recorder.stop(); } catch {}
         }
         recorder = null;
+        if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
+        if (segmentTimer) { clearInterval(segmentTimer); segmentTimer = null; }
+        if (watchdogTimer) { clearInterval(watchdogTimer); watchdogTimer = null; }
         // wait for last in-flight encrypt/upload/publish to finish
         try { await inFlight; } catch {}
         if (mediaStream) mediaStream.getTracks().forEach(t => t.stop());
