@@ -258,12 +258,33 @@
         }
       }
 
+      function nextCandidateChunkId() {
+        const ids = new Set([...announced.keys(), ...keys.keys()]);
+        const sorted = [...ids].sort((a, b) => a - b);
+        for (const id of sorted) {
+          if (id < expectedChunkId) continue;
+          if (appended.has(id)) continue;
+          if (!keys.get(id)) continue; // still require access control token
+          return id;
+        }
+        return null;
+      }
+
       async function tryAppend(_chunkId) {
-        // Append strictly in-order for smoother MSE playback.
+        // Append in-order when possible; if viewer joined mid-stream, fast-forward to first authorized chunk.
         while (true) {
           const progressed = await appendOne(expectedChunkId);
-          if (!progressed) break;
-          expectedChunkId += 1;
+          if (progressed) {
+            expectedChunkId += 1;
+            continue;
+          }
+
+          const candidate = nextCandidateChunkId();
+          if (candidate == null) break;
+          if (candidate === expectedChunkId) break;
+
+          expectedChunkId = candidate;
+          setStatus(`syncing from chunk ${expectedChunkId}…`);
         }
       }
 
