@@ -13,7 +13,6 @@
       .kv { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
       .label { color: #9aa7bd; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
       .value { font-weight: 600; }
-      .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; border:1px solid #38445c; background:#1a2233; }
       .grid { display: grid; grid-template-columns: 1fr 420px; gap: 16px; align-items: start; }
       @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
       code { background: #1a2233; color: #d2e0ff; padding: 2px 4px; border-radius: 4px; }
@@ -26,13 +25,13 @@
     </style>
   </head>
   <body>
-    <h2>Viewer (near-live video)</h2>
+    <h2>Viewer</h2>
     <div class="box meta">
       <div class="kv"><span class="label">Stream</span><span class="value"><code id="stream"></code></span></div>
       <div class="kv"><span class="label">Viewer npub</span><span class="value"><code id="npubShort"></code></span></div>
-      <div class="kv"><span class="label">Status</span><span class="value"><span class="pill" id="status">starting…</span></span></div>
+      <div class="kv"><span class="label">Status</span><span class="value" id="status">starting…</span></div>
+      <div class="kv"><span class="label">Key</span><span class="value" id="keyId">—</span></div>
       <div class="kv"><span class="label">Buffer Remaining</span><span class="value" id="bufferSec">0.0s</span></div>
-      <div class="small">Access request is sent automatically on load.</div>
     </div>
 
     <video id="v" controls autoplay playsinline muted></video>
@@ -61,6 +60,7 @@
       document.querySelector('#npubShort').textContent = shortNpub;
 
       const statusEl = document.querySelector('#status');
+      const keyIdEl = document.querySelector('#keyId');
       const bufferEl = document.querySelector('#bufferSec');
       const videoEl = document.querySelector('#v');
 
@@ -107,8 +107,8 @@
       let ms = null;
       let sb = null;
       const queue = [];
-      const TARGET_BUFFER_SEC = 16;
-      const REBUFFER_RESUME_SEC = 12;
+      const TARGET_BUFFER_SEC = 6;
+      const REBUFFER_RESUME_SEC = 6;
       let startedPlayback = false;
       let hasPlayedOnce = false;
       let mseFailures = 0;
@@ -261,6 +261,7 @@
 
           if (msg.k) currentKeyB64 = msg.k;
           if (msg.key_id) currentKeyId = msg.key_id;
+          keyIdEl.textContent = currentKeyId || '—';
 
           keys.set(Number(msg.frameId), {
             keyB64: msg.k || currentKeyB64,
@@ -268,7 +269,7 @@
             mime: msg.m || 'video/webm',
             enc: msg.enc || null,
           });
-          setStatus(`allowed; got key meta for chunk ${msg.frameId}${currentKeyId ? ` (${currentKeyId})` : ''}`);
+          setStatus(`allowed; got key meta for chunk ${msg.frameId}`);
           await tryAppend(Number(msg.frameId));
         } catch {}
       });

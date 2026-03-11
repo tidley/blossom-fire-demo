@@ -13,7 +13,6 @@
       .kv { display:flex; justify-content:space-between; gap:12px; align-items:center; }
       .label { color:#9aa7bd; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
       .value { font-weight:600; }
-      .pill { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid #38445c; background:#1a2233; }
       .grid { display: grid; grid-template-columns: 1fr 420px; gap: 16px; align-items: start; }
       @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
       code { background: #1a2233; color: #d2e0ff; padding: 2px 4px; border-radius: 4px; }
@@ -26,15 +25,18 @@
     </style>
   </head>
   <body>
-    <h2>Admin (toggle viewer access)</h2>
+    <h2>Admin</h2>
 
     <div class="grid">
       <div class="box">
         <div class="meta">
           <div class="kv"><span class="label">Stream</span><span class="value"><code id="stream"></code></span></div>
           <div class="kv"><span class="label">Admin npub</span><span class="value"><code id="adminNpub"></code></span></div>
-          <div class="kv"><span class="label">Status</span><span class="value"><span class="pill" id="status">connecting…</span></span></div>
+          <div class="kv"><span class="label">Status</span><span class="value" id="status">connecting…</span></div>
           <div class="kv"><span class="label">Allowed viewers</span><span class="value" id="allowedCount">0</span></div>
+          <div class="kv"><span class="label">Last frame</span><span class="value" id="lastFrame">—</span></div>
+          <div class="kv"><span class="label">Last key</span><span class="value" id="lastKey">—</span></div>
+          <div class="kv"><span class="label">Last broadcaster</span><span class="value" id="lastSource">—</span></div>
         </div>
         <div style="margin-top:10px;">
           <div class="small">Live preview (decrypting like a viewer, using admin-delivered keys)</div>
@@ -78,6 +80,9 @@
 
       const statusEl = document.querySelector('#status');
       const allowedCountEl = document.querySelector('#allowedCount');
+      const lastFrameEl = document.querySelector('#lastFrame');
+      const lastKeyEl = document.querySelector('#lastKey');
+      const lastSourceEl = document.querySelector('#lastSource');
       const viewersEl = document.querySelector('#viewers');
       const previewEl = document.querySelector('#preview');
       const previewVideoEl = document.querySelector('#previewVideo');
@@ -336,7 +341,11 @@
           // Live preview (non-blocking)
           tryRenderPreview(frameId);
 
-          setStatus(`got key for frame ${frameId} from ${npubFromPubkey(inner.pubkey)} (key ${keyId})`);
+          lastFrameEl.textContent = String(frameId);
+          lastKeyEl.textContent = keyId || '—';
+          const src = npubFromPubkey(inner.pubkey);
+          lastSourceEl.textContent = `${src.slice(0,14)}…${src.slice(-6)}`;
+          setStatus(`receiving keys`);
         } catch (e) {
           console.error(e);
           setStatus(`error decrypting adminkey dm: ${e.message || e}`);
