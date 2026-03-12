@@ -119,12 +119,17 @@
       const TARGET_BUFFER_SEC = 16;
       const REBUFFER_RESUME_SEC = 16;
       const AUTO_PAUSE_LOW_WATER_SEC = 2;
+      const CHUNK_BUFFER_TARGET = 6; // chunk-mode prebuffer depth (chunks)
+      const CHUNK_RESUME_TARGET = 4;
       let startedPlayback = false;
       let hasPlayedOnce = false;
       let mseFailures = 0;
       let fallbackMode = false;
       let currentObjectUrl = null;
       let streamMimeHint = null;
+      let userPaused = false;
+      const chunkQueue = [];
+      let chunkPlaying = false;
       const isChrome = /Chrome\//.test(navigator.userAgent) && !/Edg\//.test(navigator.userAgent);
       const u = new URL(location.href);
       const forceChunk = u.searchParams.get('chunk') === '1';
@@ -180,17 +185,34 @@
 
       async function playFallbackChunk(bytes, mime = 'video/webm') {
         try {
+          if (bytes && bytes.length) chunkQueue.push({ bytes, mime });
+          while (chunkQueue.length > CHUNK_BUFFER_TARGET * 2) chunkQueue.shift();
+
+          const target = hasPlayedOnce ? CHUNK_RESUME_TARGET : CHUNK_BUFFER_TARGET;
+          if (!chunkPlaying && chunkQueue.length < target) {
+            setStatus(`compatibility mode: buffering chunks (${chunkQueue.length}/${target})`);
+            return;
+          }
+          if (chunkPlaying) return;
+          if (userPaused) return;
+          if (chunkQueue.length === 0) return;
+
+          const next = chunkQueue.shift();
+          chunkPlaying = true;
           if (currentObjectUrl) {
             try { URL.revokeObjectURL(currentObjectUrl); } catch {}
             currentObjectUrl = null;
           }
-          const blob = new Blob([bytes], { type: mime });
+          const blob = new Blob([next.bytes], { type: next.mime || mime });
           currentObjectUrl = URL.createObjectURL(blob);
           videoEl.src = currentObjectUrl;
           await videoEl.play().catch(() => {});
-          setStatus('fallback mode: playing latest chunk');
+          startedPlayback = true;
+          hasPlayedOnce = true;
+          setStatus(`fallback mode: playing (${chunkQueue.length} chunks queued)`);
         } catch (e) {
           setStatus(`fallback error: ${e.message || e}`);
+          chunkPlaying = false;
         }
       }
 
@@ -231,6 +253,10 @@
       }
 
       function updateBufferUi() {
+        if (fallbackMode || preferChunkFallback) {
+          bufferEl.textContent = `${chunkQueue.length} chunks`;
+          return;
+        }
         const sec = bufferedAheadSec();
         bufferEl.textContent = `${sec.toFixed(1)}s`;
       }
@@ -429,7 +455,7 @@
       videoEl.addEventListener('waiting', () => {
         const sec = Math.round(bufferedAheadSec());
         if (fallbackMode || preferChunkFallback) {
-          setStatus(`fallback mode: waiting for next chunk (${sec}s buffered)`);
+          setStatus(`compatibility mode: waiting (${chunkQueue.length} chunks queued)`);
           return;
         }
         // Gate resume until we have enough headroom again.
@@ -437,8 +463,25 @@
         setStatus(`buffering… (${sec}s buffered)`);
       });
       videoEl.addEventListener('playing', () => {
+        if (fallbackMode || preferChunkFallback) {
+          setStatus(`compatibility mode: playing (${chunkQueue.length} chunks queued)`);
+          return;
+        }
         const sec = Math.round(bufferedAheadSec());
         setStatus(`playing (${sec}s buffered)`);
+      });
+      videoEl.addEventListener('pause', () => {
+        if (videoEl.ended) return;
+        userPaused = true;
+      });
+      videoEl.addEventListener('play', () => {
+        userPaused = false;
+      });
+      videoEl.addEventListener('ended', async () => {
+        chunkPlaying = false;
+        if (fallbackMode || preferChunkFallback) {
+          if (!userPaused) await playFallbackChunk(new Uint8Array(0));
+        }
       });
       videoEl.addEventListener('timeupdate', async () => {
         if (fallbackMode || preferChunkFallback) return;
@@ -449,7 +492,7 @@
           setStatus(`auto-paused to rebuffer (${Math.round(sec)}s buffered)`);
           return;
         }
-        if (videoEl.paused && sec >= REBUFFER_RESUME_SEC) {
+        if (videoEl.paused && !userPaused && sec >= REBUFFER_RESUME_SEC) {
           await maybeStartPlayback();
         }
       });
