@@ -125,7 +125,12 @@
       let fallbackMode = false;
       let currentObjectUrl = null;
       let streamMimeHint = null;
-      const preferChunkFallback = /Chrome\//.test(navigator.userAgent) && !/Edg\//.test(navigator.userAgent);
+      const isChrome = /Chrome\//.test(navigator.userAgent) && !/Edg\//.test(navigator.userAgent);
+      const u = new URL(location.href);
+      const forceChunk = u.searchParams.get('chunk') === '1';
+      const forceMse = u.searchParams.get('mse') === '1';
+      const tryMseFirstOnChrome = forceMse || !forceChunk;
+      const preferChunkFallback = forceChunk || (isChrome && !tryMseFirstOnChrome);
 
       function ensureSourceBuffer(gen = pipelineGen) {
         if (!ms || ms.readyState !== 'open' || sb) return;
@@ -204,6 +209,9 @@
       }
 
       resetPipeline('init');
+      if (isChrome && !preferChunkFallback) {
+        setStatus('chrome: trying MSE first (auto-fallback on failure)');
+      }
 
       function enqueue(bytes, gen = pipelineGen) {
         queue.push({ bytes, gen });
@@ -266,7 +274,7 @@
             mseFailures += 1;
             if (mseFailures >= 3) {
               fallbackMode = true;
-              setStatus('switching to fallback mode (latest chunk playback)');
+              setStatus('MSE unstable; switched to compatibility mode (latest chunk playback)');
             } else {
               resetPipeline('pipeline recovered');
             }
@@ -451,7 +459,9 @@
       setInterval(() => { tryAppend(expectedChunkId); }, 700);
       updateBufferUi();
 
-      setStatus('requested access; waiting…');
+      setStatus(isChrome && !preferChunkFallback
+        ? 'requested access; chrome MSE mode (auto-fallback enabled)…'
+        : 'requested access; waiting…');
     </script>
   </body>
 </html>
