@@ -129,8 +129,8 @@
       const u = new URL(location.href);
       const forceChunk = u.searchParams.get('chunk') === '1';
       const forceMse = u.searchParams.get('mse') === '1';
-      const tryMseFirstOnChrome = forceMse || !forceChunk;
-      const preferChunkFallback = forceChunk || (isChrome && !tryMseFirstOnChrome);
+      const tryMseFirstOnChrome = !!forceMse;
+      const preferChunkFallback = forceChunk || (isChrome && !forceMse);
 
       function ensureSourceBuffer(gen = pipelineGen) {
         if (!ms || ms.readyState !== 'open' || sb) return;
@@ -459,9 +459,11 @@
       setInterval(() => { tryAppend(expectedChunkId); }, 700);
       updateBufferUi();
 
-      setStatus(isChrome && !preferChunkFallback
-        ? 'requested access; chrome MSE mode (auto-fallback enabled)…'
-        : 'requested access; waiting…');
+      setStatus(isChrome && preferChunkFallback
+        ? 'requested access; chrome compatibility mode…'
+        : (isChrome && !preferChunkFallback
+            ? 'requested access; chrome MSE mode (opt-in) …'
+            : 'requested access; waiting…'));
     </script>
   </body>
 </html>
