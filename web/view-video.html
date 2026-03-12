@@ -123,6 +123,30 @@
       let mseFailures = 0;
       let fallbackMode = false;
       let currentObjectUrl = null;
+      let streamMimeHint = null;
+
+      function ensureSourceBuffer(gen = pipelineGen) {
+        if (!ms || ms.readyState !== 'open' || sb) return;
+        const preferred = streamMimeHint && MediaSource.isTypeSupported(streamMimeHint)
+          ? streamMimeHint
+          : mseMime;
+        if (!preferred) {
+          setStatus('error: browser does not support stream mime');
+          return;
+        }
+        try {
+          sb = ms.addSourceBuffer(preferred);
+          sb.mode = 'sequence';
+          sb.addEventListener('updateend', async () => {
+            if (gen !== pipelineGen) return;
+            pump();
+            await maybeStartPlayback();
+          });
+        } catch (e) {
+          setStatus(`MSE addSourceBuffer failed (${preferred})`);
+          console.error(e);
+        }
+      }
 
       function resetPipeline(reason = 'reset') {
         if (fallbackMode) return;
@@ -142,15 +166,7 @@
 
         ms.addEventListener('sourceopen', () => {
           if (gen !== pipelineGen) return;
-          if (!mseMime) return;
-          if (sb) return;
-          sb = ms.addSourceBuffer(mseMime);
-          sb.mode = 'sequence';
-          sb.addEventListener('updateend', async () => {
-            if (gen !== pipelineGen) return;
-            pump();
-            await maybeStartPlayback();
-          });
+          ensureSourceBuffer(gen);
           pump();
         }, { once: true });
       }
@@ -173,10 +189,12 @@
 
       async function handleDecodedChunk(bytes, mime = 'video/webm', gen = pipelineGen) {
         if (gen !== pipelineGen) return;
+        if (mime) streamMimeHint = mime;
         if (fallbackMode) {
           await playFallbackChunk(bytes, mime);
           return;
         }
+        ensureSourceBuffer(gen);
         enqueue(bytes, gen);
       }
 
@@ -217,8 +235,10 @@
       }
 
       function pump() {
-        if (!ms || !sb) return;
+        if (!ms) return;
         if (ms.readyState !== 'open') return;
+        if (!sb) ensureSourceBuffer(pipelineGen);
+        if (!sb) return;
         if (sb.updating) return;
         if (queue.length === 0) return;
         if (![...ms.sourceBuffers].includes(sb)) return;
