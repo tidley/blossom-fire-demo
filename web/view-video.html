@@ -307,7 +307,21 @@
 
         const blobHash = k?.blobHash || a?.blobHash;
         if (!blobHash) return false;
-        const payload = await blobFetch(blobHash);
+
+        let payload;
+        try {
+          payload = await blobFetch(blobHash);
+        } catch (e) {
+          const msg = String((e && e.message) || e || '');
+          if (msg.includes('404')) {
+            setStatus(`waiting for blob chunk ${chunkId}…`);
+            setTimeout(() => { tryAppend(chunkId); }, 350);
+            return false;
+          }
+          setStatus(`blob fetch error for chunk ${chunkId}`);
+          console.error(e);
+          return false;
+        }
         if (opGen !== pipelineGen) return false;
 
         const plain = (k?.enc === 'none') || (a?.enc === 'none');
@@ -395,6 +409,8 @@
       });
 
       setInterval(updateBufferUi, 500);
+      // Keep nudging append in case key/blob events arrive out-of-order or a blob briefly 404s.
+      setInterval(() => { tryAppend(expectedChunkId); }, 700);
       updateBufferUi();
 
       setStatus('requested access; waiting…');
