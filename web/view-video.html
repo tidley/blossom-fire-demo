@@ -124,6 +124,7 @@
       let fallbackMode = false;
       let currentObjectUrl = null;
       let streamMimeHint = null;
+      const preferChunkFallback = /Chrome\//.test(navigator.userAgent) && !/Edg\//.test(navigator.userAgent);
 
       function ensureSourceBuffer(gen = pipelineGen) {
         if (!ms || ms.readyState !== 'open' || sb) return;
@@ -190,7 +191,10 @@
       async function handleDecodedChunk(bytes, mime = 'video/webm', gen = pipelineGen) {
         if (gen !== pipelineGen) return;
         if (mime) streamMimeHint = mime;
-        if (fallbackMode) {
+        if (fallbackMode || preferChunkFallback) {
+          if (preferChunkFallback && !fallbackMode) {
+            setStatus('chrome compatibility mode: playing latest chunk');
+          }
           await playFallbackChunk(bytes, mime);
           return;
         }
