@@ -1,62 +1,407 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Blossom Fire — Sovereign Streaming</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blossom Fire — Sovereign Live Media</title>
   <style>
-    :root{--bg:#0a0e14;--card:#121926;--muted:#95a4bd;--text:#e9f0ff;--accent:#7cc4ff;--ok:#7cffb2}
-    *{box-sizing:border-box} html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial}
-    .deck{height:100%;overflow:hidden;position:relative}
-    .slide{display:none;height:100%;padding:56px 64px}
-    .slide.active{display:block}
-    h1{font-size:52px;margin:0 0 14px} h2{font-size:38px;margin:0 0 12px} h3{font-size:24px;margin:0 0 10px;color:var(--accent)}
-    p,li{font-size:24px;line-height:1.35} ul{margin:12px 0 0 24px}
-    .muted{color:var(--muted)} .tag{display:inline-block;padding:4px 10px;border:1px solid #2a3952;border-radius:999px;color:var(--accent);font-size:14px}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
-    .card{background:linear-gradient(180deg,#121a29,#0f1623);border:1px solid #27344a;border-radius:14px;padding:18px}
-    table{width:100%;border-collapse:collapse;font-size:18px} th,td{border:1px solid #2d3b52;padding:10px;vertical-align:top} th{background:#152033}
-    .footer{position:absolute;left:20px;right:20px;bottom:14px;display:flex;justify-content:space-between;color:var(--muted);font-size:13px}
-    .progress{position:absolute;left:0;bottom:0;height:4px;background:var(--accent);width:0%}
-    .kbd{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:#162033;border:1px solid #2d3a52;border-radius:6px;padding:2px 6px;font-size:14px}
+    :root {
+      --bg: #0a0a0f;
+      --bg2: #12121a;
+      --text: #e8e8f0;
+      --dim: #9595b0;
+      --accent: #f7931a;
+      --accent2: #7c5cff;
+      --green: #00d4aa;
+      --red: #ff4466;
+      --blue: #4488ff;
+      --card: rgba(255, 255, 255, 0.04);
+      --border: rgba(255, 255, 255, 0.08);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 56px 76px;
+      opacity: 0;
+      transform: translateX(48px);
+      transition: all 0.42s cubic-bezier(0.4, 0, 0.2, 1);
+      pointer-events: none;
+      overflow-y: auto;
+    }
+
+    .slide.active { opacity: 1; transform: translateX(0); pointer-events: auto; }
+    .slide.prev { opacity: 0; transform: translateX(-48px); }
+
+    h1 { font-size: 3.3rem; line-height: 1.04; letter-spacing: -0.03em; margin-bottom: 14px; }
+    h2 { font-size: 2.2rem; line-height: 1.12; letter-spacing: -0.02em; margin-bottom: 20px; }
+    h3 { font-size: 1.05rem; margin-bottom: 10px; color: var(--accent); }
+
+    p, li, td { color: var(--dim); line-height: 1.55; }
+    strong { color: var(--text); }
+
+    .subtitle { font-size: 1.18rem; margin-bottom: 10px; color: var(--dim); }
+    .content-left { align-items: flex-start; text-align: left; }
+    .center { text-align: center; }
+
+    .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 18px; width: 100%; max-width: 1120px; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; width: 100%; max-width: 1120px; }
+    .three-col { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; width: 100%; max-width: 1120px; }
+
+    .card, .stat-box, .diagram-box, pre { background: var(--card); border: 1px solid var(--border); border-radius: 16px; }
+    .card { padding: 22px; }
+    .stat-box { padding: 24px 18px; text-align: center; }
+    .diagram-box, pre {
+      padding: 20px 22px;
+      width: 100%;
+      max-width: 960px;
+      overflow-x: auto;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      white-space: pre-wrap;
+      color: #cfd8ea;
+    }
+
+    .big { font-size: 2.2rem; color: var(--text); line-height: 1.08; }
+    .muted { color: var(--dim); }
+
+    .tag {
+      display: inline-block;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .tag-accent { background: rgba(247,147,26,0.14); color: var(--accent); }
+    .tag-purple { background: rgba(124,92,255,0.14); color: var(--accent2); }
+    .tag-green { background: rgba(0,212,170,0.14); color: var(--green); }
+    .tag-blue { background: rgba(68,136,255,0.14); color: var(--blue); }
+    .tag-red { background: rgba(255,68,102,0.14); color: var(--red); }
+
+    .pill-row { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+
+    ul { list-style: none; }
+    li { padding: 5px 0; font-size: 1.04rem; }
+    li::before { content: "→ "; color: var(--accent); font-weight: 700; }
+
+    .timeline { display: grid; gap: 14px; width: 100%; max-width: 1040px; }
+    .step { border-left: 3px solid #33425a; padding: 8px 0 8px 16px; }
+    .step b { color: var(--text); }
+
+    table { width: 100%; border-collapse: collapse; max-width: 1080px; font-size: 0.95rem; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    th { color: var(--accent); border-bottom-width: 2px; }
+
+    #progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 3px;
+      width: 0;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      z-index: 100;
+      transition: width 0.25s ease;
+    }
+
+    #nav {
+      position: fixed;
+      right: 20px;
+      bottom: 16px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      z-index: 100;
+      color: var(--dim);
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+    }
+
+    #nav button {
+      background: var(--card);
+      color: var(--dim);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+
+    .speaker-note {
+      display: none;
+      position: fixed;
+      left: 20px;
+      bottom: 48px;
+      max-width: 480px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: rgba(247,147,26,0.08);
+      border: 1px solid rgba(247,147,26,0.2);
+      color: var(--accent);
+      font-size: 0.72rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      z-index: 100;
+    }
+
+    body.show-notes .speaker-note { display: block; }
+
+    @media (max-width: 860px) {
+      .slide { padding: 26px 18px; }
+      h1 { font-size: 2.12rem; }
+      h2 { font-size: 1.52rem; }
+      .two-col, .three-col { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
-<div class="deck" id="deck">
-  <section class="slide active"><span class="tag">Blossom Fire</span><h1>Sovereign-first live media</h1><p>Nostr control plane + Blossom blob transport.</p><p class="muted">Practical decentralized streaming for unstable networks and user-owned trust boundaries.</p></section>
+  <div id="progress"></div>
 
-  <section class="slide"><h2>The core problem</h2><ul><li>Most “decentralized” stacks still depend on centralized control points.</li><li>Identity, access policy, and transport are often tightly coupled.</li><li>Poor-network behavior is commonly an afterthought.</li></ul></section>
+  <section class="slide active center" data-time="0:35">
+    <div class="pill-row" style="justify-content:center; margin-bottom: 16px;">
+      <span class="tag tag-accent">Blossom Fire</span>
+      <span class="tag tag-purple">Nostr + Blob</span>
+      <span class="tag tag-green">Sovereign Media</span>
+    </div>
+    <h1>Live streaming without surrendering control</h1>
+    <p class="subtitle">A sovereignty-first architecture for unreliable networks.</p>
+    <div class="diagram-box" style="display:inline-block; text-align:left; max-width: 760px; margin-top: 10px;">
+Control plane: Nostr identity + authorization
+Data plane: Blob chunk transport
+Result: operator-owned trust boundaries
+    </div>
+    <div class="speaker-note">Thesis: most “decentralized” media systems still centralize control; Blossom Fire separates control and transport to preserve operator sovereignty.</div>
+  </section>
 
-  <section class="slide"><h2>Blossom Fire architecture</h2><div class="grid"><div class="card"><h3>Control plane (Nostr)</h3><ul><li>Identity & signatures</li><li>Authorization flow</li><li>Viewer policy messages</li></ul></div><div class="card"><h3>Data plane (Blobs)</h3><ul><li>Chunk payload storage</li><li>Retryable fetch model</li><li>Transport decoupled from identity</li></ul></div></div></section>
+  <section class="slide content-left" data-time="1:00">
+    <h2>Agenda</h2>
+    <div class="card-grid">
+      <div class="card"><h3>1 — Stakes</h3><p>Why current decentralized claims often break under scrutiny.</p></div>
+      <div class="card"><h3>2 — Design</h3><p>The control/data split and protocol flow.</p></div>
+      <div class="card"><h3>3 — Reliability</h3><p>Why this model survives rough network conditions.</p></div>
+      <div class="card"><h3>4 — Positioning</h3><p>Comparison with Hivetalk/WebRTC-style systems.</p></div>
+      <div class="card"><h3>5 — Limits</h3><p>What still needs hardening.</p></div>
+      <div class="card"><h3>6 — Direction</h3><p>Roadmap for stronger sovereignty + UX.</p></div>
+    </div>
+  </section>
 
-  <section class="slide"><h2>Protocol flow</h2><ul><li>Viewer → Admin: <code>access_req</code></li><li>Broadcaster announces chunk metadata on Nostr</li><li>Broadcaster → Admin: <code>adminkey</code></li><li>Admin → Viewer: <code>viewerkey</code></li><li>Viewer fetches blob, verifies authorization, plays</li></ul></section>
+  <section class="slide content-left" data-time="1:00">
+    <h2>The tension we are solving</h2>
+    <div class="two-col">
+      <div class="card">
+        <h3>What people call decentralized</h3>
+        <ul>
+          <li>centralized signaling and hidden control services</li>
+          <li>opaque account-based permission systems</li>
+          <li>platform lock-in around identity and policy</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>What operators actually need</h3>
+        <ul>
+          <li>portable identity and explicit authorization flow</li>
+          <li>replaceable infrastructure components</li>
+          <li>graceful behavior under poor connectivity</li>
+        </ul>
+      </div>
+    </div>
+  </section>
 
-  <section class="slide"><h2>Sovereignty properties</h2><div class="grid"><div class="card"><h3>Operator control</h3><p>Self-host relay, blob service, and front-end. No mandatory platform dependency.</p></div><div class="card"><h3>Portable identity</h3><p>Nostr keys and events survive client/platform churn.</p></div><div class="card"><h3>Explicit policy</h3><p>Access is message-driven and auditable, not hidden in a proprietary backend.</p></div><div class="card"><h3>Composable stack</h3><p>Swap transport/storage without rewriting identity semantics.</p></div></div></section>
+  <section class="slide content-left" data-time="1:05">
+    <h2>Blossom Fire architecture</h2>
+    <div class="three-col">
+      <div class="card">
+        <h3>Identity plane</h3>
+        <p>Nostr keys anchor who can request, authorize, and deliver stream control messages.</p>
+      </div>
+      <div class="card">
+        <h3>Control plane</h3>
+        <p>Nostr events + NIP-17 messages coordinate access, key metadata, and stream state.</p>
+      </div>
+      <div class="card">
+        <h3>Data plane</h3>
+        <p>Chunk payloads live in blob storage and are fetched independently of relay timing.</p>
+      </div>
+    </div>
+    <div class="diagram-box" style="margin-top:14px;">
+[Broadcaster] --(chunk announce)--> [Relays]
+[Broadcaster] --(adminkey)-------> [Admin]
+[Admin] ------(viewerkey)-------> [Viewer]
+[Viewer] -----(blob fetch)------> [Blob Store]
+    </div>
+  </section>
 
-  <section class="slide"><h2>Why good on unreliable networks</h2><ul><li>Chunk-based delivery handles jitter and intermittent connectivity.</li><li>Retry behavior tolerates transient missing chunks.</li><li>Out-of-order metadata can still converge to playable state.</li><li>Fallback modes preserve service when strict pipelines fail.</li></ul></section>
+  <section class="slide content-left" data-time="1:10">
+    <h2>Protocol flow (operational view)</h2>
+    <div class="timeline">
+      <div class="step"><b>Step 1:</b> Viewer requests access (<code>access_req</code>).</div>
+      <div class="step"><b>Step 2:</b> Broadcaster emits chunk metadata + blob reference.</div>
+      <div class="step"><b>Step 3:</b> Broadcaster shares admin-facing key metadata (<code>adminkey</code>).</div>
+      <div class="step"><b>Step 4:</b> Admin forwards viewer-specific authorization (<code>viewerkey</code>).</div>
+      <div class="step"><b>Step 5:</b> Viewer fetches blob, validates context, decodes, plays.</div>
+      <div class="step"><b>Step 6:</b> Playback path chooses MSE or compatibility mode based on runtime stability.</div>
+    </div>
+  </section>
 
-  <section class="slide"><h2>Comparison matrix</h2><table><thead><tr><th>Dimension</th><th>Blossom Fire</th><th>WebRTC+SFU apps</th><th>Hivetalk-style</th></tr></thead><tbody><tr><td>Identity portability</td><td>High</td><td>Low–Medium</td><td>Medium</td></tr><tr><td>Self-host sovereignty</td><td>High</td><td>Medium</td><td>Medium</td></tr><tr><td>Poor-network tolerance</td><td>High</td><td>Medium</td><td>Medium</td></tr><tr><td>Realtime smoothness</td><td>Medium</td><td>High</td><td>High</td></tr><tr><td>Hidden central points</td><td>Low</td><td>Medium–High</td><td>Medium</td></tr></tbody></table></section>
+  <section class="slide content-left" data-time="1:00">
+    <h2>Why this is sovereignty-positive</h2>
+    <div class="card-grid">
+      <div class="card"><h3>Operator-owned boundaries</h3><p>Relay, blob service, and frontend can all be self-hosted.</p></div>
+      <div class="card"><h3>Portable identity</h3><p>Nostr keys, not platform accounts, define identity trust roots.</p></div>
+      <div class="card"><h3>Auditable policy</h3><p>Authorization is explicit message flow, not hidden backend ACLs.</p></div>
+      <div class="card"><h3>Composability</h3><p>Control semantics survive infrastructure swaps.</p></div>
+    </div>
+  </section>
 
-  <section class="slide"><h2>Pragmatic browser strategy</h2><ul><li>MSE path for richer buffering and smoother continuous playback.</li><li>Compatibility chunk mode for browsers/conditions where MSE is brittle.</li><li>Auto-recovery and explicit mode control to avoid black-screen failures.</li></ul><p class="muted">Design principle: degrade gracefully, never silently die.</p></section>
+  <section class="slide content-left" data-time="1:00">
+    <h2>Designed for low-reliability networks</h2>
+    <div class="two-col">
+      <div class="card">
+        <h3>Reliability mechanisms</h3>
+        <ul>
+          <li>chunk-oriented delivery over fetchable blobs</li>
+          <li>retries for transient missing chunk windows</li>
+          <li>out-of-order control convergence</li>
+          <li>degradation instead of hard-stream collapse</li>
+        </ul>
+      </div>
+      <div class="stat-box">
+        <div class="tag tag-blue">Design preference</div>
+        <p class="big" style="margin-top: 14px;">eventual continuity</p>
+        <p style="margin-top: 10px;">over brittle realtime perfection</p>
+      </div>
+    </div>
+  </section>
 
-  <section class="slide"><h2>Use cases</h2><ul><li>Community livestreaming with user-owned infrastructure</li><li>Censorship-resistant event broadcast</li><li>Field/off-grid streaming where links are unstable</li><li>Research platform for sovereign media protocols</li></ul></section>
+  <section class="slide content-left" data-time="1:15">
+    <h2>Comparison matrix</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Dimension</th>
+          <th>Blossom Fire</th>
+          <th>Hivetalk-style</th>
+          <th>WebRTC + centralized SFU</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Identity portability</td><td><strong>High</strong> (Nostr-native)</td><td>Medium</td><td>Low–Medium</td></tr>
+        <tr><td>Self-host sovereignty</td><td><strong>High</strong></td><td>Medium</td><td>Medium</td></tr>
+        <tr><td>Poor-network tolerance</td><td><strong>High</strong> (chunk + retry)</td><td>Medium</td><td>Medium</td></tr>
+        <tr><td>Realtime smoothness</td><td>Medium (improving)</td><td><strong>High</strong></td><td><strong>High</strong></td></tr>
+        <tr><td>Hidden central chokepoints</td><td><strong>Low</strong></td><td>Medium</td><td>Medium–High</td></tr>
+      </tbody>
+    </table>
+  </section>
 
-  <section class="slide"><h2>Roadmap</h2><ul><li>Stabilize Chrome MSE path (fMP4/CMAF exploration)</li><li>Adaptive bitrate/chunk policy for volatility</li><li>Deeper observability: mode, queue depth, drift, failure reason</li><li>Hardened key lifecycle and operator controls</li></ul></section>
+  <section class="slide content-left" data-time="0:55">
+    <h2>Current implementation reality</h2>
+    <div class="two-col">
+      <div class="card">
+        <h3>What works now</h3>
+        <ul>
+          <li>end-to-end broadcaster → admin → viewer flow</li>
+          <li>viewer authorization gating</li>
+          <li>recovery and fallback logic for browser instability</li>
+          <li>operationally usable prototype</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Known constraints</h3>
+        <ul>
+          <li>Chrome MSE stability still uneven in some paths</li>
+          <li>compatibility mode trades smoothness for resilience</li>
+          <li>observability can be deeper (drift / decode telemetry)</li>
+        </ul>
+      </div>
+    </div>
+  </section>
 
-  <section class="slide"><h1>Takeaway</h1><p>Blossom Fire is a practical proof that live video can be:</p><ul><li><strong>decentralized in architecture</strong></li><li><strong>sovereign in operation</strong></li><li><strong>resilient under unreliable networks</strong></li></ul></section>
+  <section class="slide content-left" data-time="0:55">
+    <h2>Roadmap priorities</h2>
+    <div class="card-grid">
+      <div class="card"><h3>1. Browser pipeline hardening</h3><p>fMP4/CMAF path and stricter append semantics.</p></div>
+      <div class="card"><h3>2. Adaptive policies</h3><p>Dynamic chunk sizing and bitrate profiles for volatility.</p></div>
+      <div class="card"><h3>3. Stronger key lifecycle</h3><p>Clear rotation, revocation, and viewer capability boundaries.</p></div>
+      <div class="card"><h3>4. Operator controls</h3><p>Sovereignty defaults exposed as first-class runtime policy.</p></div>
+    </div>
+  </section>
 
-  <div class="footer"><div>Blossom Fire</div><div id="counter">1 / 11</div><div><span class="kbd">←</span> <span class="kbd">→</span> Navigate</div></div>
-  <div class="progress" id="progress"></div>
-</div>
-<script>
-  const slides=[...document.querySelectorAll('.slide')];
-  let i=0;
-  const c=document.getElementById('counter');
-  const p=document.getElementById('progress');
-  const show=(n)=>{i=Math.max(0,Math.min(slides.length-1,n));slides.forEach((s,idx)=>s.classList.toggle('active',idx===i));c.textContent=`${i+1} / ${slides.length}`;p.style.width=`${((i+1)/slides.length)*100}%`;};
-  addEventListener('keydown',e=>{if(['ArrowRight','PageDown',' '].includes(e.key))show(i+1);if(['ArrowLeft','PageUp'].includes(e.key))show(i-1);});
-  let sx=null; addEventListener('touchstart',e=>sx=e.touches[0].clientX,{passive:true}); addEventListener('touchend',e=>{if(sx==null)return;const dx=e.changedTouches[0].clientX-sx; if(dx<-40)show(i+1); if(dx>40)show(i-1); sx=null;},{passive:true});
-  show(0);
-</script>
+  <section class="slide center" data-time="0:35">
+    <div class="pill-row" style="justify-content:center; margin-bottom: 18px;">
+      <span class="tag tag-green">Takeaway</span>
+    </div>
+    <h1>Blossom Fire proves a practical point</h1>
+    <p class="subtitle">Live media can be decentralized in architecture, sovereign in operation, and resilient on bad networks.</p>
+    <div class="diagram-box" style="display:inline-block; text-align:left; max-width: 760px; margin-top: 10px;">
+Not trustless hype.
+Concrete trust boundaries.
+Operator-owned control.
+    </div>
+    <div class="speaker-note">Close with the thesis distilled into one repeatable line.</div>
+  </section>
+
+  <div id="nav">
+    <button onclick="prevSlide()">← Prev</button>
+    <span id="counter">1 / 11</span>
+    <button onclick="nextSlide()">Next →</button>
+    <button onclick="toggleNotes()">📝</button>
+  </div>
+
+  <script>
+    const slides = document.querySelectorAll('.slide');
+    let current = 0;
+
+    function showSlide(index) {
+      slides.forEach((slide, i) => {
+        slide.classList.remove('active', 'prev');
+        if (i === index) slide.classList.add('active');
+        else if (i < index) slide.classList.add('prev');
+      });
+
+      current = index;
+      document.getElementById('counter').textContent = `${index + 1} / ${slides.length}`;
+      document.getElementById('progress').style.width = `${((index + 1) / slides.length) * 100}%`;
+    }
+
+    function nextSlide() { if (current < slides.length - 1) showSlide(current + 1); }
+    function prevSlide() { if (current > 0) showSlide(current - 1); }
+    function toggleNotes() { document.body.classList.toggle('show-notes'); }
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowRight' || event.key === ' ' || event.key === 'Enter') {
+        event.preventDefault();
+        nextSlide();
+      }
+      if (event.key === 'ArrowLeft' || event.key === 'Backspace') {
+        event.preventDefault();
+        prevSlide();
+      }
+      if (event.key.toLowerCase() === 'n') toggleNotes();
+      if (event.key.toLowerCase() === 'f') document.documentElement.requestFullscreen?.();
+    });
+
+    let touchStartX = 0;
+    document.addEventListener('touchstart', (event) => { touchStartX = event.touches[0].clientX; });
+    document.addEventListener('touchend', (event) => {
+      const diff = event.changedTouches[0].clientX - touchStartX;
+      if (Math.abs(diff) > 50) diff > 0 ? prevSlide() : nextSlide();
+    });
+
+    showSlide(0);
+  </script>
 </body>
 </html>
