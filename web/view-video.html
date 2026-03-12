@@ -114,6 +114,7 @@
 
       let ms = null;
       let sb = null;
+      let pipelineGen = 0;
       const queue = [];
       const TARGET_BUFFER_SEC = 6;
       const REBUFFER_RESUME_SEC = 6;
@@ -125,6 +126,8 @@
 
       function resetPipeline(reason = 'reset') {
         if (fallbackMode) return;
+        pipelineGen += 1;
+        const gen = pipelineGen;
         try {
           if (sb && sb.updating) {
             try { sb.abort(); } catch {}
@@ -138,11 +141,13 @@
         setStatus(`${reason}… waiting for next chunks`);
 
         ms.addEventListener('sourceopen', () => {
+          if (gen !== pipelineGen) return;
           if (!mseMime) return;
           if (sb) return;
           sb = ms.addSourceBuffer(mseMime);
           sb.mode = 'sequence';
           sb.addEventListener('updateend', async () => {
+            if (gen !== pipelineGen) return;
             pump();
             await maybeStartPlayback();
           });
@@ -211,8 +216,12 @@
       }
 
       function pump() {
-        if (!sb || sb.updating) return;
+        if (!ms || !sb) return;
+        if (ms.readyState !== 'open') return;
+        if (sb.updating) return;
         if (queue.length === 0) return;
+        if (![...ms.sourceBuffers].includes(sb)) return;
+
         const next = queue.shift();
         try {
           sb.appendBuffer(next);
@@ -220,6 +229,8 @@
           console.error(e);
           const msg = String((e && e.message) || e || '');
           if (
+            e?.name === 'InvalidStateError' ||
+            msg.includes('SourceBuffer has been removed') ||
             msg.includes('no longer usable') ||
             msg.includes('is not, or is no longer, usable') ||
             msg.includes('Timecode element must appear before any Block')
