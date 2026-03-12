@@ -220,9 +220,6 @@
         if (gen !== pipelineGen) return;
         if (mime) streamMimeHint = mime;
         if (fallbackMode || preferChunkFallback) {
-          if (preferChunkFallback && !fallbackMode) {
-            setStatus('chrome compatibility mode: playing latest chunk');
-          }
           await playFallbackChunk(bytes, mime);
           return;
         }
