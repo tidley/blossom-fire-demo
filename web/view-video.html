@@ -116,8 +116,9 @@
       let sb = null;
       let pipelineGen = 0;
       const queue = [];
-      const TARGET_BUFFER_SEC = 6;
-      const REBUFFER_RESUME_SEC = 6;
+      const TARGET_BUFFER_SEC = 16;
+      const REBUFFER_RESUME_SEC = 16;
+      const AUTO_PAUSE_LOW_WATER_SEC = 2;
       let startedPlayback = false;
       let hasPlayedOnce = false;
       let mseFailures = 0;
@@ -419,7 +420,7 @@
 
       videoEl.addEventListener('waiting', () => {
         const sec = Math.round(bufferedAheadSec());
-        if (fallbackMode) {
+        if (fallbackMode || preferChunkFallback) {
           setStatus(`fallback mode: waiting for next chunk (${sec}s buffered)`);
           return;
         }
@@ -430,6 +431,19 @@
       videoEl.addEventListener('playing', () => {
         const sec = Math.round(bufferedAheadSec());
         setStatus(`playing (${sec}s buffered)`);
+      });
+      videoEl.addEventListener('timeupdate', async () => {
+        if (fallbackMode || preferChunkFallback) return;
+        const sec = bufferedAheadSec();
+        if (!videoEl.paused && sec < AUTO_PAUSE_LOW_WATER_SEC) {
+          videoEl.pause();
+          startedPlayback = false;
+          setStatus(`auto-paused to rebuffer (${Math.round(sec)}s buffered)`);
+          return;
+        }
+        if (videoEl.paused && sec >= REBUFFER_RESUME_SEC) {
+          await maybeStartPlayback();
+        }
       });
 
       setInterval(updateBufferUi, 500);
