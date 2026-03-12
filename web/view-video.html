@@ -171,18 +171,19 @@
         }
       }
 
-      async function handleDecodedChunk(bytes, mime = 'video/webm') {
+      async function handleDecodedChunk(bytes, mime = 'video/webm', gen = pipelineGen) {
+        if (gen !== pipelineGen) return;
         if (fallbackMode) {
           await playFallbackChunk(bytes, mime);
           return;
         }
-        enqueue(bytes);
+        enqueue(bytes, gen);
       }
 
       resetPipeline('init');
 
-      function enqueue(bytes) {
-        queue.push(bytes);
+      function enqueue(bytes, gen = pipelineGen) {
+        queue.push({ bytes, gen });
         pump();
       }
 
@@ -222,11 +223,13 @@
         if (queue.length === 0) return;
         if (![...ms.sourceBuffers].includes(sb)) return;
 
+        while (queue.length > 0 && queue[0].gen !== pipelineGen) queue.shift();
+        if (queue.length === 0) return;
+
         const next = queue.shift();
         try {
-          sb.appendBuffer(next);
+          sb.appendBuffer(next.bytes);
         } catch (e) {
-          console.error(e);
           const msg = String((e && e.message) || e || '');
           if (
             e?.name === 'InvalidStateError' ||
@@ -242,7 +245,9 @@
             } else {
               resetPipeline('pipeline recovered');
             }
+            return;
           }
+          console.error(e);
         }
       }
 
@@ -295,6 +300,7 @@
 
       async function appendOne(chunkId) {
         if (appended.has(chunkId)) return false;
+        const opGen = pipelineGen;
         const k = keys.get(chunkId);
         const a = announced.get(chunkId);
         if (!k) return false; // access control: require admin viewerkey for each chunk
@@ -302,11 +308,13 @@
         const blobHash = k?.blobHash || a?.blobHash;
         if (!blobHash) return false;
         const payload = await blobFetch(blobHash);
+        if (opGen !== pipelineGen) return false;
 
         const plain = (k?.enc === 'none') || (a?.enc === 'none');
         if (plain) {
           const mime = k?.mime || a?.mime || 'video/webm';
-          await handleDecodedChunk(payload, mime);
+          await handleDecodedChunk(payload, mime, opGen);
+          if (opGen !== pipelineGen) return false;
           mseFailures = 0;
           appended.add(chunkId);
           await maybeStartPlayback();
@@ -321,8 +329,10 @@
 
         try {
           const pt = await aesGcmDecrypt(keyBytes, iv, ct, { aadBytes: aad });
+          if (opGen !== pipelineGen) return false;
           const mime = k?.mime || a?.mime || 'video/webm';
-          await handleDecodedChunk(pt, mime);
+          await handleDecodedChunk(pt, mime, opGen);
+          if (opGen !== pipelineGen) return false;
           mseFailures = 0;
           appended.add(chunkId);
           await maybeStartPlayback();
