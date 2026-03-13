@@ -4,14 +4,10 @@ const IS_HTTPS = location.protocol === 'https:';
 
 export const RELAYS = IS_HTTPS
   ? [
-      'wss://tomdwyer.uk',
-      'wss://relay.tomdwyer.uk',
       'wss://nip17.tomdwyer.uk',
     ]
   : [
       `ws://${LAN_HOST}:8080`,
-      'wss://tomdwyer.uk',
-      'wss://relay.tomdwyer.uk',
       'wss://nip17.tomdwyer.uk',
     ];
 
