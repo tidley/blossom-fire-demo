@@ -107,6 +107,10 @@
           <div><span class="k">last event id:</span> <span class="v" id="diagLastEvent">—</span></div>
           <div><span class="k">last relay:</span> <span class="v" id="diagLastRelay">—</span></div>
           <div><span class="k">last unwrap:</span> <span class="v" id="diagLastUnwrap">—</span></div>
+          <div><span class="k">dm seen / unwrap ok:</span> <span class="v" id="diagDmSeen">0</span> / <span class="v" id="diagDmUnwrapOk">0</span></div>
+          <div><span class="k">adminkey accepted:</span> <span class="v" id="diagAdminKeyAccepted">0</span></div>
+          <div><span class="k">dropped (type / stream):</span> <span class="v" id="diagDropType">0</span> / <span class="v" id="diagDropStream">0</span></div>
+          <div><span class="k">control cmds:</span> <span class="v" id="diagControlCmds">0</span></div>
         </div>
 
         <div class="row" style="justify-content:space-between; align-items:center; margin-top:8px;">
@@ -172,6 +176,12 @@
       const diagLastEventEl = document.querySelector('#diagLastEvent');
       const diagLastRelayEl = document.querySelector('#diagLastRelay');
       const diagLastUnwrapEl = document.querySelector('#diagLastUnwrap');
+      const diagDmSeenEl = document.querySelector('#diagDmSeen');
+      const diagDmUnwrapOkEl = document.querySelector('#diagDmUnwrapOk');
+      const diagAdminKeyAcceptedEl = document.querySelector('#diagAdminKeyAccepted');
+      const diagDropTypeEl = document.querySelector('#diagDropType');
+      const diagDropStreamEl = document.querySelector('#diagDropStream');
+      const diagControlCmdsEl = document.querySelector('#diagControlCmds');
       const previewEl = document.querySelector('#preview');
       const previewVideoEl = document.querySelector('#previewVideo');
 
@@ -566,18 +576,32 @@
       });
 
       const seenDmIds = new Set();
+      const dmStats = { seen: 0, unwrapOk: 0, adminkeyAccepted: 0, droppedType: 0, droppedStream: 0, controlCmds: 0 };
+      function renderDmStats() {
+        diagDmSeenEl.textContent = String(dmStats.seen);
+        diagDmUnwrapOkEl.textContent = String(dmStats.unwrapOk);
+        diagAdminKeyAcceptedEl.textContent = String(dmStats.adminkeyAccepted);
+        diagDropTypeEl.textContent = String(dmStats.droppedType);
+        diagDropStreamEl.textContent = String(dmStats.droppedStream);
+        diagControlCmdsEl.textContent = String(dmStats.controlCmds);
+      }
+      renderDmStats();
+
       async function processWrappedDm(ev, relaySource = 'pool') {
         if (!ev?.id || seenDmIds.has(ev.id)) return;
         seenDmIds.add(ev.id);
+        dmStats.seen += 1;
+        renderDmStats();
         diagLastEventEl.textContent = ev.id;
         diagLastRelayEl.textContent = relaySource;
         try {
           const { inner, msg } = nip17UnwrapJson(adminSk, ev);
+          dmStats.unwrapOk += 1;
+          renderDmStats();
           diagLastUnwrapEl.textContent = 'ok';
           const senderNpubAll = npubFromPubkey(inner.pubkey);
           const shortSenderAll = `${senderNpubAll.slice(0,14)}…${senderNpubAll.slice(-6)}`;
           const rawAll = String(inner?.content || '').trim();
-          audit(`dm recv ${shortSenderAll}: ${rawAll || '<empty>'}`, 'ok');
 
           // DM control path:
           // - "0" from admin toggles threshold unlock/lock mode
@@ -612,6 +636,8 @@
           }
 
           if (controlIndex === 0) {
+            dmStats.controlCmds += 1;
+            renderDmStats();
             const r = thresholdCtl.toggleUnlock(senderNpub);
             if (!r.ok) {
               audit(`dm command from ${shortSender}: unlock rejected (admin only)`);
@@ -623,27 +649,29 @@
           }
 
           if (Number.isFinite(controlIndex) && controlIndex > 0) {
+            dmStats.controlCmds += 1;
+            renderDmStats();
             audit(`dm command from ${shortSender}: ${desiredAllowed === null ? 'toggle' : (desiredAllowed ? 'set ON' : 'set OFF')} #${controlIndex}`);
             await toggleViewerByIndex(controlIndex, 'dm', senderNpub, desiredAllowed);
             return;
           }
 
-          if (!msg || msg.streamId !== streamId) return;
-
-          if (msg.type === 'access_req') {
-            const pub = inner.pubkey;
-            if (!viewers.has(pub)) {
-              viewers.set(pub, { allowed: false, lastSeen: ev.created_at, npub: npubFromPubkey(pub) });
-            } else {
-              const v = viewers.get(pub);
-              v.lastSeen = ev.created_at;
-              viewers.set(pub, v);
-            }
-            renderViewers();
+          // Strict admin image/key path: only accept adminkey for this stream.
+          if (!msg || msg.type !== 'adminkey') {
+            dmStats.droppedType += 1;
+            renderDmStats();
+            return;
+          }
+          if (msg.streamId !== streamId) {
+            dmStats.droppedStream += 1;
+            renderDmStats();
+            audit(`dm dropped wrong stream from ${shortSender}: ${msg.streamId || '(missing)'} != ${streamId}`, 'muted');
             return;
           }
 
-          if (msg.type !== 'adminkey') return;
+          dmStats.adminkeyAccepted += 1;
+          renderDmStats();
+          audit(`adminkey rx ${shortSender}: frame ${msg.frameId ?? '?'} key ${msg.key_id || 'default'}`, 'ok');
 
           broadcasters.add(inner.pubkey);
 
