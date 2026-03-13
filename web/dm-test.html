@@ -30,6 +30,11 @@
         <button id="clear">Clear Log</button>
       </div>
       <div style="margin-top:8px;">Status: <span id="status">idle</span></div>
+      <div class="diag">
+        <div><span class="k">sub pubkey:</span> <span class="v" id="diagSubPub">—</span></div>
+        <div><span class="k">last event id:</span> <span class="v" id="diagLastEvent">—</span></div>
+        <div><span class="k">last unwrap:</span> <span class="v" id="diagLastUnwrap">—</span></div>
+      </div>
     </div>
 
     <div class="box">
@@ -51,7 +56,9 @@
       const npubEl = document.getElementById('npub');
       const statusEl = document.getElementById('status');
       const logEl = document.getElementById('log');
-
+      const diagSubPubEl = document.getElementById('diagSubPub');
+      const diagLastEventEl = document.getElementById('diagLastEvent');
+      const diagLastUnwrapEl = document.getElementById('diagLastUnwrap');
       relayEl.textContent = RELAY;
 
       function line(text, cls='') {
@@ -78,6 +85,7 @@
       const sk = getOrCreateSk();
       const pub = getPublicKey(sk);
       npubEl.textContent = nip19.npubEncode(pub);
+      diagSubPubEl.textContent = pub;
 
       let ws = null;
       let subId = null;
@@ -124,12 +132,15 @@
 
           if (msg[0] === 'EVENT' && msg[1] === subId) {
             const evObj = msg[2];
+            diagLastEventEl.textContent = evObj?.id || '—';
             try {
               if (!gift?.unwrapEvent) throw new Error('nip17/nip59 unwrap unavailable');
               const inner = gift.unwrapEvent(evObj, sk);
               line(`DM from ${inner.pubkey.slice(0,12)}…: ${inner.content}`, 'ok');
+              diagLastUnwrapEl.textContent = 'ok';
               statusEl.textContent = 'receiving';
             } catch (e) {
+              diagLastUnwrapEl.textContent = `fail: ${e.message || e}`;
               line(`event received but unwrap failed: ${e.message || e}`, 'err');
             }
             return;

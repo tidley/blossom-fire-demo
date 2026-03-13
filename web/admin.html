@@ -32,6 +32,9 @@
       .hint { border:1px solid #253043; border-radius:8px; padding:8px; margin:8px 0; background:#0f1522; }
       .hint ul { margin:6px 0 0 18px; color:#b9c7e6; }
       .hint li { margin:4px 0; }
+      .diag { border:1px solid #253043; border-radius:8px; padding:8px; margin-top:8px; background:#0f1522; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; }
+      .diag .k { color:#9aa7bd; }
+      .diag .v { color:#d2e0ff; }
       .admin-qr { display:grid; gap:8px; justify-items:start; margin-bottom:10px; }
       .admin-qr img { width: 340px; height: 340px; border:1px solid #3a4354; border-radius: 10px; background:#fff; }
           .titlebar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
@@ -99,6 +102,13 @@
 
         <div id="viewers"></div>
 
+        <div class="diag" id="dmDiag">
+          <div><span class="k">sub pubkey:</span> <span class="v" id="diagSubPub">—</span></div>
+          <div><span class="k">last event id:</span> <span class="v" id="diagLastEvent">—</span></div>
+          <div><span class="k">last relay:</span> <span class="v" id="diagLastRelay">—</span></div>
+          <div><span class="k">last unwrap:</span> <span class="v" id="diagLastUnwrap">—</span></div>
+        </div>
+
         <div class="row" style="justify-content:space-between; align-items:center; margin-top:8px;">
           <div class="small"><b>Audit log</b></div>
           <button id="clearAudit" type="button">Clear Audit log</button>
@@ -157,6 +167,7 @@
       const adminNpub = npubFromPubkey(adminPub);
       document.querySelector('#adminNpub').textContent = `${adminNpub.slice(0,14)}…${adminNpub.slice(-6)}`;
       adminPubHexEl.textContent = adminPub;
+      diagSubPubEl.textContent = adminPub;
       adminNpubTextEl.textContent = adminNpub;
       adminNpubQrEl.src = `https://api.qrserver.com/v1/create-qr-code/?size=700x700&data=${encodeURIComponent(adminNpub)}`;
       const lastFrameEl = document.querySelector('#lastFrame');
@@ -165,6 +176,10 @@
       const viewersEl = document.querySelector('#viewers');
       const auditEl = document.querySelector('#audit');
       const clearAuditEl = document.querySelector('#clearAudit');
+      const diagSubPubEl = document.querySelector('#diagSubPub');
+      const diagLastEventEl = document.querySelector('#diagLastEvent');
+      const diagLastRelayEl = document.querySelector('#diagLastRelay');
+      const diagLastUnwrapEl = document.querySelector('#diagLastUnwrap');
       const previewEl = document.querySelector('#preview');
       const previewVideoEl = document.querySelector('#previewVideo');
 
@@ -550,11 +565,14 @@
       });
 
       const seenDmIds = new Set();
-      async function processWrappedDm(ev) {
+      async function processWrappedDm(ev, relaySource = 'pool') {
         if (!ev?.id || seenDmIds.has(ev.id)) return;
         seenDmIds.add(ev.id);
+        diagLastEventEl.textContent = ev.id;
+        diagLastRelayEl.textContent = relaySource;
         try {
           const { inner, msg } = nip17UnwrapJson(adminSk, ev);
+          diagLastUnwrapEl.textContent = 'ok';
           const senderNpubAll = npubFromPubkey(inner.pubkey);
           const shortSenderAll = `${senderNpubAll.slice(0,14)}…${senderNpubAll.slice(-6)}`;
           const rawAll = String(inner?.content || '').trim();
@@ -665,6 +683,7 @@
           setStatus(`receiving keys`);
         } catch (e) {
           console.error(e);
+          diagLastUnwrapEl.textContent = `fail: ${e.message || e}`;
           audit(`dm unwrap error: ${e.message || e}`, 'err');
           setStatus(`error decrypting adminkey dm: ${e.message || e}`);
         }
@@ -673,7 +692,7 @@
       // Subscribe to DMs via pool (works on non-auth relays)
       sub([
         { kinds: [1059], '#p': [adminPub], since: dmSince, limit: 500 }
-      ], async (ev) => { await processWrappedDm(ev); });
+      ], async (ev) => { await processWrappedDm(ev, 'pool'); });
 
       // Additional direct websocket auth subscription for auth-required relays.
       function subscribeDmWithAuth(relayUrl) {
@@ -710,7 +729,7 @@
           }
 
           if (msg[0] === 'EVENT' && msg[1] === subId) {
-            await processWrappedDm(msg[2]);
+            await processWrappedDm(msg[2], relayUrl);
           }
         };
 
