@@ -50,17 +50,31 @@ if (!gift?.wrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (ni
 
 function now() { return Math.floor(Date.now() / 1000); }
 
+function bytesToHex(bytes) {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 function wrapCompat(senderSk, recipientPub, payloadText) {
   const recipient = { publicKey: recipientPub, relays: [RELAY] };
   const rumor = finalizeEvent(
     { kind: 14, created_at: now(), tags: [], content: payloadText, pubkey: getPublicKey(senderSk) },
     senderSk
   );
+  const skHex = bytesToHex(senderSk);
 
+  // Mirror browser util.js compatibility strategy as closely as possible.
   const attempts = [
+    // event-first variants
     () => gift.wrapEvent(rumor, senderSk, recipientPub),
+    () => gift.wrapEvent(rumor, skHex, recipientPub),
+
+    // sender-first variants
     () => gift.wrapEvent(senderSk, recipient, payloadText),
+    () => gift.wrapEvent(skHex, recipient, payloadText),
+
+    // older fallback signatures
     () => gift.wrapEvent(senderSk, recipientPub, payloadText),
+    () => gift.wrapEvent(skHex, recipientPub, payloadText),
   ];
 
   let lastErr;
