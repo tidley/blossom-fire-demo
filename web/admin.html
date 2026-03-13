@@ -25,7 +25,10 @@
       .viewer .idx { color:#9aa7bd; min-width: 24px; display:inline-block; text-align:right; margin-right:8px; }
       .allow-big { transform: scale(1.6); transform-origin: center; accent-color: #7ab8ff; margin-left: 8px; }
       .audit { max-height: 220px; overflow: auto; border:1px solid #253043; border-radius:8px; padding:8px; margin-top:8px; background:#0f1522; }
-      .audit .line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color:#b9c7e6; padding: 3px 0; border-bottom: 1px dashed #223049; }
+      .audit .line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color:#b9c7e6; padding: 3px 0; border-bottom: 1px dashed #223049; white-space: pre-wrap; }
+      .audit .line.ok { color:#87e8a9; }
+      .audit .line.err { color:#ff9aa9; }
+      .audit .line.muted { color:#9aa7bd; }
       .hint { border:1px solid #253043; border-radius:8px; padding:8px; margin:8px 0; background:#0f1522; }
       .hint ul { margin:6px 0 0 18px; color:#b9c7e6; }
       .hint li { margin:4px 0; }
@@ -251,10 +254,10 @@
 
       function setStatus(s) { statusEl.textContent = s; }
 
-      function audit(line) {
+      function audit(line, cls = '') {
         const ts = new Date().toISOString().replace('T', ' ').replace('Z', '');
         const el = document.createElement('div');
-        el.className = 'line';
+        el.className = `line ${cls}`.trim();
         el.textContent = `[${ts}] ${line}`;
         auditEl.prepend(el);
         while (auditEl.children.length > 200) auditEl.removeChild(auditEl.lastChild);
@@ -555,7 +558,7 @@
           const senderNpubAll = npubFromPubkey(inner.pubkey);
           const shortSenderAll = `${senderNpubAll.slice(0,14)}…${senderNpubAll.slice(-6)}`;
           const rawAll = String(inner?.content || '').trim();
-          audit(`dm recv ${shortSenderAll}: ${rawAll || '<empty>'}`);
+          audit(`dm recv ${shortSenderAll}: ${rawAll || '<empty>'}`, 'ok');
 
           // DM control path:
           // - "0" from admin toggles threshold unlock/lock mode
@@ -662,7 +665,7 @@
           setStatus(`receiving keys`);
         } catch (e) {
           console.error(e);
-          audit(`dm unwrap error: ${e.message || e}`);
+          audit(`dm unwrap error: ${e.message || e}`, 'err');
           setStatus(`error decrypting adminkey dm: ${e.message || e}`);
         }
       }
@@ -679,7 +682,7 @@
         const sendReq = () => ws.send(JSON.stringify(['REQ', subId, { kinds: [1059], '#p': [adminPub], since: dmSince, limit: 500 }]));
 
         ws.onopen = () => {
-          audit(`dm ws connected: ${relayUrl}`);
+          audit(`dm ws connected: ${relayUrl}`, 'muted');
           sendReq();
         };
         ws.onmessage = async (m) => {
@@ -692,10 +695,10 @@
               const auth = finalizeEvent(authUnsigned, adminSk);
               ws.send(JSON.stringify(['AUTH', auth]));
               subId = `adm-${Date.now()}-a`;
-              audit(`dm ws auth ok: ${relayUrl}`);
+              audit(`dm ws auth ok: ${relayUrl}`, 'muted');
               setTimeout(() => { try { sendReq(); } catch {} }, 50);
             } catch (e) {
-              audit(`auth failed ${relayUrl}: ${e.message || e}`);
+              audit(`auth failed ${relayUrl}: ${e.message || e}`, 'err');
             }
             return;
           }
@@ -712,11 +715,11 @@
         };
 
         ws.onerror = () => {
-          audit(`dm ws error on ${relayUrl}`);
+          audit(`dm ws error on ${relayUrl}`, 'err');
         };
 
         ws.onclose = () => {
-          audit(`dm ws closed: ${relayUrl} (reconnecting)`);
+          audit(`dm ws closed: ${relayUrl} (reconnecting)`, 'muted');
           setTimeout(() => subscribeDmWithAuth(relayUrl), 2000);
         };
       }
