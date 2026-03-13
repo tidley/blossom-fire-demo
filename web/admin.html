@@ -114,8 +114,9 @@
           <div><span class="k">unwrap fail buckets:</span> <span class="v" id="diagFailBuckets">—</span></div>
           <div><span class="k">unwrap stage:</span> <span class="v" id="diagUnwrapStage">—</span></div>
           <div><span class="k">inner sender:</span> <span class="v" id="diagInnerSender">—</span></div>
-          <div><span class="k">pinned broadcaster:</span> <span class="v" id="diagPinnedBroadcaster">—</span></div>
+          <div><span class="k">pinned broadcaster:</span> <span class="v" id="diagPinnedBroadcaster">—</span> <button id="resetPinnedBroadcaster" type="button" style="margin-left:8px;">Reset</button></div>
           <div><span class="k">adminkey rejected sender:</span> <span class="v" id="diagRejectSender">0</span></div>
+          <div><span class="k">adminkey rejected old/dup:</span> <span class="v" id="diagRejectOldDup">0</span> / <span class="v" id="diagRejectDup">0</span></div>
         </div>
 
         <div class="row" style="justify-content:space-between; align-items:center; margin-top:8px;">
@@ -192,7 +193,10 @@
       const diagUnwrapStageEl = document.querySelector('#diagUnwrapStage');
       const diagInnerSenderEl = document.querySelector('#diagInnerSender');
       const diagPinnedBroadcasterEl = document.querySelector('#diagPinnedBroadcaster');
+      const resetPinnedBroadcasterEl = document.querySelector('#resetPinnedBroadcaster');
       const diagRejectSenderEl = document.querySelector('#diagRejectSender');
+      const diagRejectOldDupEl = document.querySelector('#diagRejectOldDup');
+      const diagRejectDupEl = document.querySelector('#diagRejectDup');
       const previewEl = document.querySelector('#preview');
       const previewVideoEl = document.querySelector('#previewVideo');
 
@@ -588,6 +592,8 @@
 
       const seenDmIds = new Set();
       let pinnedBroadcasterPub = null;
+      let lastAcceptedFrameId = 0;
+      const seenAdminKeyRecords = new Set();
       let noisyEvtLogEvery = 20;
       const dmStats = {
         seen: 0,
@@ -596,6 +602,8 @@
         droppedType: 0,
         droppedStream: 0,
         rejectedSender: 0,
+        rejectedOldFrame: 0,
+        rejectedDuplicate: 0,
         controlCmds: 0,
         failBuckets: {
           invalid_payload_length: 0,
@@ -612,6 +620,8 @@
         diagDropTypeEl.textContent = String(dmStats.droppedType);
         diagDropStreamEl.textContent = String(dmStats.droppedStream);
         diagRejectSenderEl.textContent = String(dmStats.rejectedSender);
+        diagRejectOldDupEl.textContent = String(dmStats.rejectedOldFrame);
+        diagRejectDupEl.textContent = String(dmStats.rejectedDuplicate);
         diagControlCmdsEl.textContent = String(dmStats.controlCmds);
         const b = dmStats.failBuckets;
         diagFailBucketsEl.textContent = `payload:${b.invalid_payload_length} b64:${b.invalid_base64} ver:${b.unknown_encryption_version} json:${b.json_parse} other:${b.other}`;
@@ -623,6 +633,16 @@
         }
       }
       renderDmStats();
+
+      if (resetPinnedBroadcasterEl) {
+        resetPinnedBroadcasterEl.onclick = () => {
+          pinnedBroadcasterPub = null;
+          lastAcceptedFrameId = 0;
+          seenAdminKeyRecords.clear();
+          renderDmStats();
+          audit('reset pinned broadcaster and adminkey dedupe state', 'muted');
+        };
+      }
 
       function bucketUnwrapError(err) {
         const m = String(err?.message || err || '').toLowerCase();
@@ -756,6 +776,26 @@
           const mime = msg.m || 'image/webp';
           const keyId = msg.key_id || (isPlain ? 'plain' : 'default');
 
+          if (Number.isFinite(lastAcceptedFrameId) && frameId <= lastAcceptedFrameId) {
+            dmStats.rejectedOldFrame += 1;
+            renderDmStats();
+            audit(`adminkey rejected old frame ${frameId} <= ${lastAcceptedFrameId}`, 'muted');
+            return;
+          }
+
+          const dedupeKey = `${frameId}|${blobHash}|${keyId}`;
+          if (seenAdminKeyRecords.has(dedupeKey)) {
+            dmStats.rejectedDuplicate += 1;
+            renderDmStats();
+            audit(`adminkey duplicate skipped frame ${frameId} key ${keyId}`, 'muted');
+            return;
+          }
+          seenAdminKeyRecords.add(dedupeKey);
+          if (seenAdminKeyRecords.size > 512) {
+            const first = seenAdminKeyRecords.values().next().value;
+            if (first) seenAdminKeyRecords.delete(first);
+          }
+
           adminFrameKeys.set(frameId, { keyBytes, blobHash, mime, keyId, plain: isPlain });
 
           // Forward to allowed viewers immediately; include key only on key change per viewer.
@@ -779,6 +819,7 @@
           // Live preview (non-blocking)
           tryRenderPreview(frameId);
 
+          lastAcceptedFrameId = frameId;
           lastFrameEl.textContent = String(frameId);
           lastKeyEl.textContent = keyId || '—';
           const src = npubFromPubkey(inner.pubkey);
