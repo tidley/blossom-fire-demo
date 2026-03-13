@@ -56,10 +56,12 @@
       const statusEl = document.querySelector('#status');
       const imgEl = document.querySelector('#img');
 
-      // frameId -> { keyB64, blobHash, mime, enc }
+      // frameId -> { keyB64, keyId, blobHash, mime, enc }
       const keys = new Map();
       // frameId -> blobHash (announced)
       const announced = new Map();
+      // key_id -> keyB64
+      const keysById = new Map();
       let currentKeyB64 = null;
 
       function setStatus(s) { statusEl.textContent = s; }
@@ -112,9 +114,14 @@
           if (!msg || msg.type !== 'viewerkey') return;
           if (msg.streamId !== streamId) return;
 
-          if (msg.k) currentKeyB64 = msg.k;
+          const keyId = msg.key_id || 'default';
+          if (msg.k) {
+            currentKeyB64 = msg.k;
+            keysById.set(keyId, msg.k);
+          }
           keys.set(Number(msg.frameId), {
-            keyB64: msg.k || currentKeyB64,
+            keyId,
+            keyB64: msg.k || keysById.get(keyId) || currentKeyB64,
             blobHash: msg.x,
             mime: msg.m || 'image/webp',
             enc: msg.enc || null,
@@ -137,15 +144,16 @@
 
         const payload = await blobFetch(blobHash);
         const plain = (k?.enc === 'none');
+        const resolvedKeyB64 = k?.keyB64 || (k?.keyId ? keysById.get(k.keyId) : null) || currentKeyB64;
 
         try {
           const bytes = plain
             ? payload
             : await (async () => {
-                if (!k.keyB64) throw new Error('missing key');
+                if (!resolvedKeyB64) throw new Error('missing key');
                 const iv = payload.slice(0, 12);
                 const ct = payload.slice(12);
-                const keyBytes = b64decode(k.keyB64);
+                const keyBytes = b64decode(resolvedKeyB64);
 
                 // Be tolerant to sender-side AAD format drift across builds.
                 const aadCandidates = [
