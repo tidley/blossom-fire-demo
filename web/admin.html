@@ -483,6 +483,10 @@
       ], async (ev) => {
         try {
           const { inner, msg } = nip17UnwrapJson(adminSk, ev);
+          const senderNpubAll = npubFromPubkey(inner.pubkey);
+          const shortSenderAll = `${senderNpubAll.slice(0,14)}…${senderNpubAll.slice(-6)}`;
+          const rawAll = String(inner?.content || '').trim();
+          audit(`dm recv ${shortSenderAll}: ${rawAll || '<empty>'}`);
 
           // DM control path:
           // - "0" from admin toggles threshold unlock/lock mode
@@ -490,8 +494,8 @@
           // - "2 on" / "2 off" supported for explicit desired state
           // - JSON: {"type":"toggle_viewer","index":2} or {"type":"set_viewer","index":2,"allowed":true}
           const raw = String(inner?.content || '').trim();
-          const senderNpub = npubFromPubkey(inner.pubkey);
-          const shortSender = `${senderNpub.slice(0,14)}…${senderNpub.slice(-6)}`;
+          const senderNpub = senderNpubAll;
+          const shortSender = shortSenderAll;
 
           let controlIndex = null;
           let desiredAllowed = null;
@@ -589,6 +593,7 @@
           setStatus(`receiving keys`);
         } catch (e) {
           console.error(e);
+          audit(`dm unwrap error: ${e.message || e}`);
           setStatus(`error decrypting adminkey dm: ${e.message || e}`);
         }
       });
