@@ -370,7 +370,7 @@
       }
 
       function isSenderAllowed(senderNpub) {
-        return controllerNpubs.has(senderNpub);
+        return senderNpub === adminNpub || controllerNpubs.has(senderNpub);
       }
 
       const thresholdCtl = createThresholdController({
