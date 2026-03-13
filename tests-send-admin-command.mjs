@@ -156,6 +156,7 @@ async function main() {
   await wsPublish(RELAY, wrap, senderSk);
 
   console.log('PASS sent admin command DM', {
+    eventId: wrap.id,
     relay: RELAY,
     from: senderPub,
     to: TARGET_NPUB,
