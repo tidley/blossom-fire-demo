@@ -7,7 +7,8 @@ import {
 } from "https://esm.sh/nostr-tools@2.18.2/pure";
 import { nip19 } from "https://esm.sh/nostr-tools@2.18.2";
 
-import { RELAYS } from "./config.js";
+import { RELAYS, USE_PUSHSTR_DM } from "./config.js";
+import { wrapDmJsonPushstrCompat, unwrapDmJsonPushstrCompat } from "./pushstr-dm-adapter.js";
 
 function bytesToHex(bytes) {
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
@@ -108,6 +109,10 @@ function toPrivkeyInput(sk) {
 }
 
 export function nip17WrapJson(senderSk, recipientPubkeyHex, payload) {
+  if (USE_PUSHSTR_DM) {
+    return wrapDmJsonPushstrCompat({ senderSk, recipientPubkeyHex, payload, relays: RELAYS });
+  }
+
   if (!giftWrap?.wrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
   const recipient = { publicKey: recipientPubkeyHex, relays: RELAYS };
   const content = typeof payload === 'string' ? payload : JSON.stringify(payload);
@@ -142,6 +147,10 @@ export function nip17WrapJson(senderSk, recipientPubkeyHex, payload) {
 }
 
 export function nip17UnwrapJson(recipientSk, wrapEv) {
+  if (USE_PUSHSTR_DM) {
+    return unwrapDmJsonPushstrCompat({ recipientSk, wrapEv });
+  }
+
   if (!giftWrap?.unwrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
   const inner = giftWrap.unwrapEvent(wrapEv, toPrivkeyInput(recipientSk));
   let msg = null;

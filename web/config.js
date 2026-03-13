@@ -34,3 +34,7 @@ export const TAG_DEMO = "blossom-fire-demo";
 export const TAG_DEMO_VIDEO = "blossom-fire-demo-video";
 export const TAG_REQ = "blossom-fire-demo-req";
 export const TAG_ADMINKEY = "blossom-fire-demo-adminkey";
+
+// Feature flag: when true, route DM wrap/unwrap through Pushstr-aligned adapter.
+// Default false until extraction is fully validated end-to-end.
+export const USE_PUSHSTR_DM = false;
