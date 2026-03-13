@@ -54,6 +54,7 @@
           <div class="kv"><span class="label">Stream</span><span class="value"><code id="stream"></code></span></div>
           <div class="kv"><span class="label">Admin npub</span><span class="value"><code id="adminNpub"></code></span></div>
           <div class="kv"><span class="label">Status</span><span class="value" id="status">connecting…</span></div>
+          <div class="kv"><span class="label">Control mode</span><span class="value" id="controlMode">admin override</span></div>
           <div class="kv"><span class="label">Allowed viewers</span><span class="value" id="allowedCount">0</span></div>
           <div class="kv"><span class="label">Last frame</span><span class="value" id="lastFrame">—</span></div>
           <div class="kv"><span class="label">Last key</span><span class="value" id="lastKey">—</span></div>
@@ -78,7 +79,8 @@
         </div>
         <div class="small">Only controller npubs can toggle viewers via DM number commands.</div>
         <div class="small">When ON, admin forwards keys for new frames to that viewer.</div>
-        <div class="small">DM control: send admin a DM containing a viewer number (e.g. <code>2</code>) to toggle that viewer.</div>
+        <div class="small">DM control: send admin a DM containing a viewer number (e.g. <code>2</code>) to target that viewer.</div>
+        <div class="small">Admin can always change immediately. Send <code>0</code> from admin to unlock/lock threshold mode. When unlocked, non-admin controllers require 2 votes to switch a viewer.</div>
         <div id="viewers"></div>
         <div class="small" style="margin-top:8px;">Audit log (DM control + actions)</div>
         <div id="audit" class="audit"></div>
@@ -90,6 +92,7 @@
       import { blobFetch } from './blob.js';
       import { aesGcmDecrypt, b64decode, b64encode, utf8Bytes } from './crypto.js';
       import { createContextVmRuntime } from './contextvm-sdk.js';
+      import { createThresholdController } from './context-threshold.js';
       import {
         getStreamId,
         skFromHex,
@@ -126,6 +129,7 @@
       const adminNpubTextEl = document.querySelector('#adminNpubText');
       const controllersEl = document.querySelector('#controllers');
       const saveControllersEl = document.querySelector('#saveControllers');
+      const controlModeEl = document.querySelector('#controlMode');
       const allowedCountEl = document.querySelector('#allowedCount');
       const adminSk = skFromHex(ADMIN_SK_HEX);
       const adminPub = pubkeyFromSk(adminSk);
@@ -335,6 +339,15 @@
         resolveViewerByIndex,
       });
 
+      const thresholdCtl = createThresholdController({
+        threshold: 2,
+        isAdmin: (npub) => npub === adminNpub,
+      });
+      function updateControlModeUi() {
+        controlModeEl.textContent = thresholdCtl.isUnlocked() ? 'threshold unlocked (2 votes)' : 'admin override';
+      }
+      updateControlModeUi();
+
       async function setViewerAllowed(pub, allowed, source = 'ui') {
         const v = viewers.get(pub);
         if (!v) return false;
@@ -355,7 +368,7 @@
         return true;
       }
 
-      async function toggleViewerByIndex(index, source = 'dm', actorNpub = adminNpub) {
+      async function toggleViewerByIndex(index, source = 'dm', actorNpub = adminNpub, desiredAllowed = null) {
         const { ok, reason, action, transition } = accessVm.transition({
           type: 'toggle_by_index',
           index,
@@ -369,8 +382,28 @@
           return false;
         }
 
-        const changed = await setViewerAllowed(action.viewerPub, action.allowed, source);
-        await publishTransitionLog({ ...transition, applied: !!changed });
+        const viewer = viewers.get(action.viewerPub);
+        const decision = thresholdCtl.decide({
+          actor: actorNpub,
+          viewerPub: action.viewerPub,
+          currentAllowed: !!viewer?.allowed,
+          desiredAllowed,
+        });
+
+        if (!decision.ok) {
+          audit(`toggle(${source}) blocked: ${decision.reason} (actor=${actorNpub}, index=${index})`);
+          await publishTransitionLog({ ...transition, policy: 'threshold', ok: false, reason: decision.reason });
+          return false;
+        }
+
+        if (!decision.apply) {
+          audit(`vote(${source}) recorded for #${index}: ${decision.votes}/${decision.threshold}`);
+          await publishTransitionLog({ ...transition, policy: 'threshold', ok: true, applied: false, votes: decision.votes, threshold: decision.threshold, target: decision.allowed });
+          return true;
+        }
+
+        const changed = await setViewerAllowed(action.viewerPub, decision.allowed, source);
+        await publishTransitionLog({ ...transition, policy: 'threshold', ok: true, applied: !!changed, mode: decision.mode, target: decision.allowed });
         return changed;
       }
 
@@ -450,20 +483,52 @@
         try {
           const { inner, msg } = nip17UnwrapJson(adminSk, ev);
 
-          // DM control path (from any sender): send a number like "2" to toggle viewer #2.
-          // Also supports JSON: {"type":"toggle_viewer","streamId":"...","index":2}
+          // DM control path:
+          // - "0" from admin toggles threshold unlock/lock mode
+          // - "2" toggles/targets viewer #2 (admin immediate; others require 2 votes when unlocked)
+          // - "2 on" / "2 off" supported for explicit desired state
+          // - JSON: {"type":"toggle_viewer","index":2} or {"type":"set_viewer","index":2,"allowed":true}
           const raw = String(inner?.content || '').trim();
-          const numberText = /^\d+$/.test(raw) ? Number(raw) : null;
-          const jsonToggle = msg && typeof msg === 'object' && msg.type === 'toggle_viewer'
-            ? Number(msg.index ?? msg.n ?? msg.viewer)
-            : null;
-          const controlIndex = Number.isFinite(numberText) ? numberText : (Number.isFinite(jsonToggle) ? jsonToggle : null);
+          const senderNpub = npubFromPubkey(inner.pubkey);
+          const shortSender = `${senderNpub.slice(0,14)}…${senderNpub.slice(-6)}`;
 
-          if (controlIndex !== null) {
-            const senderNpub = npubFromPubkey(inner.pubkey);
-            const shortSender = `${senderNpub.slice(0,14)}…${senderNpub.slice(-6)}`;
-            audit(`dm command from ${shortSender}: toggle #${controlIndex}`);
-            await toggleViewerByIndex(controlIndex, 'dm', senderNpub);
+          let controlIndex = null;
+          let desiredAllowed = null;
+
+          const mSet = raw.match(/^(\d+)\s+(on|off)$/i);
+          if (mSet) {
+            controlIndex = Number(mSet[1]);
+            desiredAllowed = mSet[2].toLowerCase() === 'on';
+          } else if (/^\d+$/.test(raw)) {
+            controlIndex = Number(raw);
+          }
+
+          if (msg && typeof msg === 'object') {
+            if (msg.type === 'toggle_viewer') {
+              const n = Number(msg.index ?? msg.n ?? msg.viewer);
+              if (Number.isFinite(n)) controlIndex = n;
+            }
+            if (msg.type === 'set_viewer') {
+              const n = Number(msg.index ?? msg.n ?? msg.viewer);
+              if (Number.isFinite(n)) controlIndex = n;
+              if (typeof msg.allowed === 'boolean') desiredAllowed = !!msg.allowed;
+            }
+          }
+
+          if (controlIndex === 0) {
+            const r = thresholdCtl.toggleUnlock(senderNpub);
+            if (!r.ok) {
+              audit(`dm command from ${shortSender}: unlock rejected (admin only)`);
+            } else {
+              updateControlModeUi();
+              audit(`dm command from ${shortSender}: control mode => ${r.unlocked ? 'threshold unlocked (2 votes)' : 'admin override'}`);
+            }
+            return;
+          }
+
+          if (Number.isFinite(controlIndex) && controlIndex > 0) {
+            audit(`dm command from ${shortSender}: ${desiredAllowed === null ? 'toggle' : (desiredAllowed ? 'set ON' : 'set OFF')} #${controlIndex}`);
+            await toggleViewerByIndex(controlIndex, 'dm', senderNpub, desiredAllowed);
             return;
           }
 
