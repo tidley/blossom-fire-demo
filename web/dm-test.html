@@ -33,7 +33,10 @@
     </div>
 
     <div class="box">
-      <div><b>Received messages</b></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <b>Received messages (new only)</b>
+        <button id="clearInView" type="button">Clear</button>
+      </div>
       <div id="log" class="log"></div>
     </div>
 
@@ -79,18 +82,19 @@
       let ws = null;
       let subId = null;
       let stopped = false;
+      let sinceNow = Math.floor(Date.now() / 1000);
 
       function start() {
         stopped = false;
         if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
 
+        sinceNow = Math.floor(Date.now() / 1000);
         subId = `dm-${Date.now()}`;
         ws = new WebSocket(RELAY);
 
         ws.onopen = () => {
           statusEl.textContent = 'connected; subscribing…';
-          ws.send(JSON.stringify(['REQ', subId, { kinds:[1059], '#p':[pub], limit:200 }]));
-          line('connected + REQ sent', 'ok');
+          ws.send(JSON.stringify(['REQ', subId, { kinds:[1059], '#p':[pub], since: sinceNow, limit:200 }]));
         };
 
         ws.onmessage = (ev) => {
@@ -104,7 +108,7 @@
               ws.send(JSON.stringify(['AUTH', auth]));
               subId = `dm-${Date.now()}-a`;
               setTimeout(() => {
-                try { ws.send(JSON.stringify(['REQ', subId, { kinds:[1059], '#p':[pub], limit:200 }])); } catch {}
+                try { ws.send(JSON.stringify(['REQ', subId, { kinds:[1059], '#p':[pub], since: sinceNow, limit:200 }])); } catch {}
               }, 50);
               statusEl.textContent = 'auth sent; re-subscribed';
               line('AUTH challenge handled', 'ok');
@@ -128,13 +132,10 @@
             return;
           }
 
-          if (msg[0] === 'EOSE') {
-            line('EOSE', 'muted');
-            return;
-          }
+          if (msg[0] === 'EOSE') return;
 
           if (msg[0] === 'CLOSED') {
-            line(`CLOSED: ${msg[2] || ''}`, 'err');
+            statusEl.textContent = `closed: ${msg[2] || ''}`;
             return;
           }
         };
@@ -160,9 +161,9 @@
 
       document.getElementById('start').onclick = start;
       document.getElementById('stop').onclick = stop;
-      document.getElementById('clear').onclick = () => { logEl.innerHTML = ''; };
-
-      line('ready');
+      const clearFn = () => { logEl.innerHTML = ''; };
+      document.getElementById('clear').onclick = clearFn;
+      document.getElementById('clearInView').onclick = clearFn;
     </script>
   </body>
 </html>
