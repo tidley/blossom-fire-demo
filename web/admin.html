@@ -610,7 +610,7 @@
             : 'ok';
           const senderNpubAll = npubFromPubkey(inner.pubkey);
           const shortSenderAll = `${senderNpubAll.slice(0,14)}…${senderNpubAll.slice(-6)}`;
-          const rawAll = String(unwrapped?.rawContent ?? inner?.content || '').trim();
+          const rawAll = String((unwrapped?.rawContent ?? inner?.content) || '').trim();
 
           // DM control path:
           // - "0" from admin toggles threshold unlock/lock mode
