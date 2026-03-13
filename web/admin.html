@@ -6,7 +6,7 @@
     <title>Admin</title>
     <style>
       :root { color-scheme: dark; }
-      body { font-family: system-ui, sans-serif; margin: 16px; background: #0b0e14; color: #e6edf3; }
+      body { font-family: system-ui, sans-serif; margin: 16px; background: #0b0e14; color: #e6edf3; overflow-x: hidden; }
       .box { padding: 12px; border: 1px solid #2f3540; border-radius: 10px; background: #111826; }
       .row { display: flex; gap: 12px; flex-wrap: wrap; }
       .meta { display:grid; gap:8px; }
@@ -24,7 +24,7 @@
       .viewer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid #253043; }
       .viewer .idx { color:#9aa7bd; min-width: 24px; display:inline-block; text-align:right; margin-right:8px; }
       .allow-big { transform: scale(1.6); transform-origin: center; accent-color: #7ab8ff; margin-left: 8px; }
-      .audit { width:100%; max-width:100%; box-sizing:border-box; max-height: 220px; overflow: auto; border:1px solid #253043; border-radius:8px; padding:8px; margin-top:8px; background:#0f1522; }
+      .audit { width:100%; max-width:100%; box-sizing:border-box; max-height: 220px; overflow-x: auto; overflow-y: auto; border:1px solid #253043; border-radius:8px; padding:8px; margin-top:8px; background:#0f1522; }
       .audit .line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color:#b9c7e6; padding: 3px 0; border-bottom: 1px dashed #223049; white-space: pre; }
       .audit .line.ok { color:#87e8a9; }
       .audit .line.err { color:#ff9aa9; }
