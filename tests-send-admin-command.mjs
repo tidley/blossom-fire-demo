@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as nt from 'nostr-tools';
+import { wrapNip17Event } from './scripts/nip17-wrap.mjs';
 const { getPublicKey, nip19, finalizeEvent, nip42 } = nt;
 
 const RELAY = process.env.RELAY_NIP17 || 'wss://nip17.tomdwyer.uk';
@@ -39,44 +40,7 @@ function loadAdminSkHex() {
   throw new Error('ADMIN_SK_HEX not found in web/config.js (set SENDER_SK_HEX env)');
 }
 
-const gift = nt.nip17 || nt.nip59;
-if (!gift?.wrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
 
-function now() { return Math.floor(Date.now() / 1000); }
-
-function bytesToHex(bytes) {
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-function wrapCompat(senderSk, recipientPub, payloadText) {
-  const recipient = { publicKey: recipientPub, relays: [RELAY] };
-  const rumor = finalizeEvent(
-    { kind: 14, created_at: now(), tags: [], content: payloadText, pubkey: getPublicKey(senderSk) },
-    senderSk
-  );
-  const skHex = bytesToHex(senderSk);
-
-  // Mirror browser util.js compatibility strategy as closely as possible.
-  const attempts = [
-    // event-first variants
-    () => gift.wrapEvent(rumor, senderSk, recipientPub),
-    () => gift.wrapEvent(rumor, skHex, recipientPub),
-
-    // sender-first variants
-    () => gift.wrapEvent(senderSk, recipient, payloadText),
-    () => gift.wrapEvent(skHex, recipient, payloadText),
-
-    // older fallback signatures
-    () => gift.wrapEvent(senderSk, recipientPub, payloadText),
-    () => gift.wrapEvent(skHex, recipientPub, payloadText),
-  ];
-
-  let lastErr;
-  for (const fn of attempts) {
-    try { return fn(); } catch (e) { lastErr = e; }
-  }
-  throw lastErr || new Error('nip17 wrap failed');
-}
 
 async function wsPublish(url, event, senderSk) {
   return new Promise((resolve, reject) => {
@@ -146,11 +110,17 @@ async function main() {
     }
   }
 
-  const wrap = wrapCompat(senderSk, recipientPub, finalContent);
+  const { event: wrap, method } = wrapNip17Event({
+    senderSk,
+    recipientPubHex: recipientPub,
+    relay: RELAY,
+    content: finalContent,
+  });
   await wsPublish(RELAY, wrap, senderSk);
 
   console.log('PASS sent admin command DM', {
     eventId: wrap.id,
+    wrapMethod: method,
     relay: RELAY,
     from: senderPub,
     to: TARGET_NPUB,

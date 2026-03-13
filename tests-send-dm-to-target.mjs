@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as nt from 'nostr-tools';
+import { wrapNip17Event } from './scripts/nip17-wrap.mjs';
 const { getPublicKey, nip19, finalizeEvent, nip42 } = nt;
 
 const RELAY = process.env.RELAY_NIP17 || 'wss://nip17.tomdwyer.uk';
@@ -29,23 +30,7 @@ function loadAdminSkHex() {
   throw new Error('ADMIN_SK_HEX not found in web/config.js (set SENDER_SK_HEX env)');
 }
 
-const gift = nt.nip17 || nt.nip59;
-if (!gift?.wrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
-
 function now() { return Math.floor(Date.now() / 1000); }
-
-function wrapCompat(senderSk, recipientPub, obj) {
-  const content = JSON.stringify(obj);
-  try {
-    return gift.wrapEvent(senderSk, { publicKey: recipientPub, relays: [RELAY] }, content);
-  } catch {
-    const rumor = finalizeEvent(
-      { kind: 14, created_at: now(), tags: [], content, pubkey: getPublicKey(senderSk) },
-      senderSk
-    );
-    return gift.wrapEvent(rumor, senderSk, recipientPub);
-  }
-}
 
 async function wsPublish(url, event, senderSk) {
   return new Promise((resolve, reject) => {
@@ -100,10 +85,16 @@ async function main() {
     ts: now(),
   };
 
-  const wrap = wrapCompat(senderSk, recipientPub, payload);
+  const { event: wrap, method } = wrapNip17Event({
+    senderSk,
+    recipientPubHex: recipientPub,
+    relay: RELAY,
+    content: JSON.stringify(payload),
+  });
   await wsPublish(RELAY, wrap, senderSk);
 
   console.log('PASS sent DM', {
+    wrapMethod: method,
     relay: RELAY,
     from: senderPub,
     to: TARGET_NPUB,
