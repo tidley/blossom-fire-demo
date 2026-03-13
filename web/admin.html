@@ -26,6 +26,8 @@
       .allow-big { transform: scale(1.6); transform-origin: center; accent-color: #7ab8ff; margin-left: 8px; }
       .audit { max-height: 220px; overflow: auto; border:1px solid #253043; border-radius:8px; padding:8px; margin-top:8px; background:#0f1522; }
       .audit .line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color:#b9c7e6; padding: 3px 0; border-bottom: 1px dashed #223049; }
+      .admin-qr { display:grid; gap:8px; justify-items:start; margin-bottom:10px; }
+      .admin-qr img { width: 340px; height: 340px; border:1px solid #3a4354; border-radius: 10px; background:#fff; }
           .titlebar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
       .stream-jump { display:flex; align-items:center; gap:8px; }
       .stream-jump input { width: 140px; padding: 6px 8px; }
@@ -44,6 +46,10 @@
 
     <div class="grid">
       <div class="box">
+        <div class="admin-qr">
+          <img id="adminNpubQr" alt="Admin npub QR" />
+          <div class="small" id="adminNpubText"></div>
+        </div>
         <div class="meta">
           <div class="kv"><span class="label">Stream</span><span class="value"><code id="stream"></code></span></div>
           <div class="kv"><span class="label">Admin npub</span><span class="value"><code id="adminNpub"></code></span></div>
@@ -111,8 +117,12 @@
       const adminPub = pubkeyFromSk(adminSk);
       const adminNpub = npubFromPubkey(adminPub);
       document.querySelector('#adminNpub').textContent = `${adminNpub.slice(0,14)}…${adminNpub.slice(-6)}`;
+      adminNpubTextEl.textContent = adminNpub;
+      adminNpubQrEl.src = `https://api.qrserver.com/v1/create-qr-code/?size=700x700&data=${encodeURIComponent(adminNpub)}`;
 
       const statusEl = document.querySelector('#status');
+      const adminNpubQrEl = document.querySelector('#adminNpubQr');
+      const adminNpubTextEl = document.querySelector('#adminNpubText');
       const allowedCountEl = document.querySelector('#allowedCount');
       const lastFrameEl = document.querySelector('#lastFrame');
       const lastKeyEl = document.querySelector('#lastKey');
