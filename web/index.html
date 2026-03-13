@@ -53,7 +53,12 @@
         <p><small>Use one Admin page per stream. It handles key forwarding for both Frames and Video.</small></p>
         <div class="btns">
           <a class="btn" data-page="broadcast.html" href="/broadcast.html?stream=demo1">Broadcast Frames</a>
-          <a class="btn" data-page="view.html" href="/view.html?stream=demo1">View Frames</a>
+          <a class="btn" id="viewFramesLink" data-page="view.html" href="/view.html?stream=demo1">View Frames</a>
+        </div>
+        <div class="qr">
+          <img id="viewFramesQr" alt="QR code for View Frames link" />
+          <div class="mini" id="viewFramesUrl"></div>
+          <button id="copyViewFrames" type="button">Copy View Frames URL</button>
         </div>
       </section>
 
@@ -78,6 +83,10 @@
       const input = document.getElementById('streamId');
       const regenBtn = document.getElementById('regen');
       const links = Array.from(document.querySelectorAll('a[data-page]'));
+      const viewFramesLink = document.getElementById('viewFramesLink');
+      const viewFramesQr = document.getElementById('viewFramesQr');
+      const viewFramesUrl = document.getElementById('viewFramesUrl');
+      const copyViewFrames = document.getElementById('copyViewFrames');
       const viewVideoLink = document.getElementById('viewVideoLink');
       const viewVideoQr = document.getElementById('viewVideoQr');
       const viewVideoUrl = document.getElementById('viewVideoUrl');
@@ -111,12 +120,25 @@
           a.href = `/${page}?stream=${encoded}`;
         });
 
+        const framesAbs = new URL(viewFramesLink.getAttribute('href'), location.origin).toString();
+        viewFramesUrl.textContent = framesAbs;
+        viewFramesQr.src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(framesAbs)}`;
+
         const abs = new URL(viewVideoLink.getAttribute('href'), location.origin).toString();
         viewVideoUrl.textContent = abs;
         viewVideoQr.src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(abs)}`;
 
         setQueryStream(stream);
       }
+
+      copyViewFrames.addEventListener('click', async () => {
+        const text = viewFramesUrl.textContent || '';
+        try {
+          await navigator.clipboard.writeText(text);
+          copyViewFrames.textContent = 'Copied';
+          setTimeout(() => (copyViewFrames.textContent = 'Copy View Frames URL'), 1000);
+        } catch {}
+      });
 
       copyViewVideo.addEventListener('click', async () => {
         const text = viewVideoUrl.textContent || '';
