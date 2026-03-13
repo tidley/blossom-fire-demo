@@ -4,8 +4,8 @@ import {
   finalizeEvent,
   generateSecretKey,
   getPublicKey,
-  nip19,
 } from "https://esm.sh/nostr-tools@2.18.2/pure";
+import { nip19 } from "https://esm.sh/nostr-tools@2.18.2";
 
 import { RELAYS } from "./config.js";
 
