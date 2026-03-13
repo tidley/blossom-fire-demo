@@ -67,17 +67,23 @@ export async function publish(event) {
 }
 
 export function sub(filters, onEvent) {
-  // nostr-tools SimplePool APIs differ by build/version.
+  // nostr-tools pool signatures vary across versions:
+  // - subscribeMany(relays, filterObj, params)
+  // - sub(relays, filtersArray)
+  // - subscribe(relays, filterObj|filtersArray, params)
+  const filtersArr = Array.isArray(filters) ? filters : [filters];
+  const filterObj = filtersArr[0] || {};
+
   if (typeof pool.subscribeMany === "function") {
-    return pool.subscribeMany(RELAYS, filters, { onevent: onEvent });
+    return pool.subscribeMany(RELAYS, filterObj, { onevent: onEvent });
   }
   if (typeof pool.sub === "function") {
-    const s = pool.sub(RELAYS, filters);
+    const s = pool.sub(RELAYS, filtersArr);
     s.on("event", onEvent);
     return s;
   }
   if (typeof pool.subscribe === "function") {
-    return pool.subscribe(RELAYS, filters, { onevent: onEvent });
+    return pool.subscribe(RELAYS, filterObj, { onevent: onEvent });
   }
   throw new Error("SimplePool: no subscribe method available");
 }
