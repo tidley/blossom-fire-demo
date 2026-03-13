@@ -114,6 +114,8 @@
           <div><span class="k">unwrap fail buckets:</span> <span class="v" id="diagFailBuckets">—</span></div>
           <div><span class="k">unwrap stage:</span> <span class="v" id="diagUnwrapStage">—</span></div>
           <div><span class="k">inner sender:</span> <span class="v" id="diagInnerSender">—</span></div>
+          <div><span class="k">pinned broadcaster:</span> <span class="v" id="diagPinnedBroadcaster">—</span></div>
+          <div><span class="k">adminkey rejected sender:</span> <span class="v" id="diagRejectSender">0</span></div>
         </div>
 
         <div class="row" style="justify-content:space-between; align-items:center; margin-top:8px;">
@@ -189,6 +191,8 @@
       const diagFailBucketsEl = document.querySelector('#diagFailBuckets');
       const diagUnwrapStageEl = document.querySelector('#diagUnwrapStage');
       const diagInnerSenderEl = document.querySelector('#diagInnerSender');
+      const diagPinnedBroadcasterEl = document.querySelector('#diagPinnedBroadcaster');
+      const diagRejectSenderEl = document.querySelector('#diagRejectSender');
       const previewEl = document.querySelector('#preview');
       const previewVideoEl = document.querySelector('#previewVideo');
 
@@ -583,12 +587,15 @@
       });
 
       const seenDmIds = new Set();
+      let pinnedBroadcasterPub = null;
+      let noisyEvtLogEvery = 20;
       const dmStats = {
         seen: 0,
         unwrapOk: 0,
         adminkeyAccepted: 0,
         droppedType: 0,
         droppedStream: 0,
+        rejectedSender: 0,
         controlCmds: 0,
         failBuckets: {
           invalid_payload_length: 0,
@@ -604,9 +611,16 @@
         diagAdminKeyAcceptedEl.textContent = String(dmStats.adminkeyAccepted);
         diagDropTypeEl.textContent = String(dmStats.droppedType);
         diagDropStreamEl.textContent = String(dmStats.droppedStream);
+        diagRejectSenderEl.textContent = String(dmStats.rejectedSender);
         diagControlCmdsEl.textContent = String(dmStats.controlCmds);
         const b = dmStats.failBuckets;
         diagFailBucketsEl.textContent = `payload:${b.invalid_payload_length} b64:${b.invalid_base64} ver:${b.unknown_encryption_version} json:${b.json_parse} other:${b.other}`;
+        if (pinnedBroadcasterPub) {
+          const np = npubFromPubkey(pinnedBroadcasterPub);
+          diagPinnedBroadcasterEl.textContent = `${np.slice(0,14)}…${np.slice(-6)}`;
+        } else {
+          diagPinnedBroadcasterEl.textContent = '—';
+        }
       }
       renderDmStats();
 
@@ -629,7 +643,9 @@
 
         const senderRawShort = ev?.pubkey ? `${ev.pubkey.slice(0,12)}…${ev.pubkey.slice(-8)}` : 'unknown';
         const pTags = Array.isArray(ev?.tags) ? ev.tags.filter(t => t?.[0] === 'p').map(t => (t?.[1] || '').slice(0,10)).join(',') : '';
-        audit(`dm evt kind=${ev?.kind ?? '?'} from=${senderRawShort} p=[${pTags || '-'}]`, 'muted');
+        if (dmStats.seen <= 8 || (dmStats.seen % noisyEvtLogEvery === 0)) {
+          audit(`dm evt kind=${ev?.kind ?? '?'} from=${senderRawShort} p=[${pTags || '-'}]`, 'muted');
+        }
 
         try {
           const unwrapped = USE_PUSHSTR_DM_ADMIN
@@ -715,6 +731,15 @@
             dmStats.droppedStream += 1;
             renderDmStats();
             audit(`dm dropped wrong stream from ${shortSender}: ${msg.streamId || '(missing)'} != ${streamId}`, 'muted');
+            return;
+          }
+
+          if (!pinnedBroadcasterPub) {
+            pinnedBroadcasterPub = inner.pubkey;
+          } else if (inner.pubkey !== pinnedBroadcasterPub) {
+            dmStats.rejectedSender += 1;
+            renderDmStats();
+            audit(`adminkey rejected sender mismatch ${shortSender}`, 'muted');
             return;
           }
 
