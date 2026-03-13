@@ -53,6 +53,7 @@
         <div class="meta">
           <div class="kv"><span class="label">Stream</span><span class="value"><code id="stream"></code></span></div>
           <div class="kv"><span class="label">Admin npub</span><span class="value"><code id="adminNpub"></code></span></div>
+          <div class="kv"><span class="label">Admin pubkey hex</span><span class="value"><code id="adminPubHex"></code></span></div>
           <div class="kv"><span class="label">Status</span><span class="value" id="status">connecting…</span></div>
           <div class="kv"><span class="label">Control mode</span><span class="value" id="controlMode">admin override</span></div>
           <div class="kv"><span class="label">Allowed viewers</span><span class="value" id="allowedCount">0</span></div>
@@ -127,6 +128,7 @@
       const statusEl = document.querySelector('#status');
       const adminNpubQrEl = document.querySelector('#adminNpubQr');
       const adminNpubTextEl = document.querySelector('#adminNpubText');
+      const adminPubHexEl = document.querySelector('#adminPubHex');
       const controllersEl = document.querySelector('#controllers');
       const saveControllersEl = document.querySelector('#saveControllers');
       const controlModeEl = document.querySelector('#controlMode');
@@ -135,6 +137,7 @@
       const adminPub = pubkeyFromSk(adminSk);
       const adminNpub = npubFromPubkey(adminPub);
       document.querySelector('#adminNpub').textContent = `${adminNpub.slice(0,14)}…${adminNpub.slice(-6)}`;
+      adminPubHexEl.textContent = adminPub;
       adminNpubTextEl.textContent = adminNpub;
       adminNpubQrEl.src = `https://api.qrserver.com/v1/create-qr-code/?size=700x700&data=${encodeURIComponent(adminNpub)}`;
       const lastFrameEl = document.querySelector('#lastFrame');
