@@ -151,6 +151,7 @@
       const lastSentKeyIdByViewer = new Map();
 
       const CONTROLLERS_KEY = `context.controllers.${streamId}`;
+      const HARDCODED_ADMIN_CONTROLLER = 'npub19at4nqjjymca2lh3v546vcg5ktun3al4c5xu2pts3ewckv0y70ys0gupzr';
       let controllerNpubs = new Set();
       function normalizeControllerList(text) {
         return new Set(String(text || '')
@@ -159,14 +160,14 @@
           .filter(s => s.startsWith('npub1')));
       }
       function loadControllers() {
-        const raw = localStorage.getItem(CONTROLLERS_KEY) || adminNpub;
+        const raw = localStorage.getItem(CONTROLLERS_KEY) || HARDCODED_ADMIN_CONTROLLER;
         controllerNpubs = normalizeControllerList(raw);
-        if (!controllerNpubs.size) controllerNpubs.add(adminNpub);
+        controllerNpubs.add(HARDCODED_ADMIN_CONTROLLER);
         controllersEl.value = Array.from(controllerNpubs).join(',');
       }
       function saveControllers() {
         controllerNpubs = normalizeControllerList(controllersEl.value);
-        if (!controllerNpubs.size) controllerNpubs.add(adminNpub);
+        controllerNpubs.add(HARDCODED_ADMIN_CONTROLLER);
         localStorage.setItem(CONTROLLERS_KEY, Array.from(controllerNpubs).join(','));
         controllersEl.value = Array.from(controllerNpubs).join(',');
       }
