@@ -1,0 +1,168 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Simple Nostr DM Test</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 16px; background:#0b0e14; color:#e6edf3; }
+      .box { border:1px solid #2f3540; border-radius:8px; padding:12px; background:#111826; margin-bottom:12px; }
+      input, button { font-size:15px; background:#1a2233; color:#e6edf3; border:1px solid #3a4354; border-radius:6px; padding:6px 8px; }
+      input { width: 100%; max-width: 900px; }
+      code { background:#1a2233; padding:2px 4px; border-radius:4px; }
+      .log { max-height: 55vh; overflow:auto; border:1px solid #253043; border-radius:8px; padding:8px; background:#0f1522; }
+      .line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; border-bottom:1px dashed #223049; padding:4px 0; white-space: pre-wrap; }
+      .ok { color:#87e8a9; }
+      .err { color:#ff9aa9; }
+      .muted { color:#9aa7bd; font-size:12px; }
+    </style>
+  </head>
+  <body>
+    <h2>Simple Nostr DM Test (Receive + Display)</h2>
+
+    <div class="box">
+      <div>Relay: <code id="relay"></code></div>
+      <div>Your npub: <code id="npub"></code></div>
+      <div class="muted">This page creates/uses a local key and subscribes to kind 1059 DMs tagged to your pubkey.</div>
+      <div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button id="start">Start Listening</button>
+        <button id="stop">Stop</button>
+        <button id="clear">Clear Log</button>
+      </div>
+      <div style="margin-top:8px;">Status: <span id="status">idle</span></div>
+    </div>
+
+    <div class="box">
+      <div><b>Received messages</b></div>
+      <div id="log" class="log"></div>
+    </div>
+
+    <script type="module">
+      import { generateSecretKey, getPublicKey, nip19, finalizeEvent, nip42 } from 'https://esm.sh/nostr-tools@2.10.2';
+      import * as nt from 'https://esm.sh/nostr-tools@2.10.2';
+
+      const RELAY = 'wss://nip17.tomdwyer.uk';
+      const gift = nt.nip17 || nt.nip59;
+
+      const relayEl = document.getElementById('relay');
+      const npubEl = document.getElementById('npub');
+      const statusEl = document.getElementById('status');
+      const logEl = document.getElementById('log');
+
+      relayEl.textContent = RELAY;
+
+      function line(text, cls='') {
+        const el = document.createElement('div');
+        el.className = `line ${cls}`;
+        el.textContent = `[${new Date().toISOString()}] ${text}`;
+        logEl.prepend(el);
+      }
+
+      function getOrCreateSk() {
+        const key = 'dmtest.sk.hex';
+        const existing = localStorage.getItem(key);
+        if (existing && /^[0-9a-f]{64}$/i.test(existing)) {
+          const out = new Uint8Array(32);
+          for (let i = 0; i < 32; i++) out[i] = parseInt(existing.slice(i*2, i*2+2), 16);
+          return out;
+        }
+        const sk = generateSecretKey();
+        const hex = Array.from(sk, b => b.toString(16).padStart(2,'0')).join('');
+        localStorage.setItem(key, hex);
+        return sk;
+      }
+
+      const sk = getOrCreateSk();
+      const pub = getPublicKey(sk);
+      npubEl.textContent = nip19.npubEncode(pub);
+
+      let ws = null;
+      let subId = null;
+      let stopped = false;
+
+      function start() {
+        stopped = false;
+        if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+
+        subId = `dm-${Date.now()}`;
+        ws = new WebSocket(RELAY);
+
+        ws.onopen = () => {
+          statusEl.textContent = 'connected; subscribing…';
+          ws.send(JSON.stringify(['REQ', subId, { kinds:[1059], '#p':[pub], limit:200 }]));
+          line('connected + REQ sent', 'ok');
+        };
+
+        ws.onmessage = (ev) => {
+          let msg;
+          try { msg = JSON.parse(ev.data); } catch { return; }
+
+          if (msg[0] === 'AUTH') {
+            try {
+              const authUnsigned = { ...nip42.makeAuthEvent(RELAY, msg[1]), pubkey: pub };
+              const auth = finalizeEvent(authUnsigned, sk);
+              ws.send(JSON.stringify(['AUTH', auth]));
+              subId = `dm-${Date.now()}-a`;
+              setTimeout(() => {
+                try { ws.send(JSON.stringify(['REQ', subId, { kinds:[1059], '#p':[pub], limit:200 }])); } catch {}
+              }, 50);
+              statusEl.textContent = 'auth sent; re-subscribed';
+              line('AUTH challenge handled', 'ok');
+            } catch (e) {
+              statusEl.textContent = `auth error: ${e.message || e}`;
+              line(`AUTH error: ${e.message || e}`, 'err');
+            }
+            return;
+          }
+
+          if (msg[0] === 'EVENT' && msg[1] === subId) {
+            const evObj = msg[2];
+            try {
+              if (!gift?.unwrapEvent) throw new Error('nip17/nip59 unwrap unavailable');
+              const inner = gift.unwrapEvent(evObj, sk);
+              line(`DM from ${inner.pubkey.slice(0,12)}…: ${inner.content}`, 'ok');
+              statusEl.textContent = 'receiving';
+            } catch (e) {
+              line(`event received but unwrap failed: ${e.message || e}`, 'err');
+            }
+            return;
+          }
+
+          if (msg[0] === 'EOSE') {
+            line('EOSE', 'muted');
+            return;
+          }
+
+          if (msg[0] === 'CLOSED') {
+            line(`CLOSED: ${msg[2] || ''}`, 'err');
+            return;
+          }
+        };
+
+        ws.onerror = () => {
+          statusEl.textContent = 'ws error';
+          line('websocket error', 'err');
+        };
+
+        ws.onclose = () => {
+          statusEl.textContent = stopped ? 'stopped' : 'closed; retrying…';
+          if (!stopped) setTimeout(start, 1500);
+        };
+      }
+
+      function stop() {
+        stopped = true;
+        try { if (ws && subId) ws.send(JSON.stringify(['CLOSE', subId])); } catch {}
+        try { ws?.close(); } catch {}
+        ws = null;
+        statusEl.textContent = 'stopped';
+      }
+
+      document.getElementById('start').onclick = start;
+      document.getElementById('stop').onclick = stop;
+      document.getElementById('clear').onclick = () => { logEl.innerHTML = ''; };
+
+      line('ready');
+    </script>
+  </body>
+</html>
