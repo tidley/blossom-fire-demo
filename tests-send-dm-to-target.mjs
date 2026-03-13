@@ -1,12 +1,6 @@
 import { readFileSync } from 'node:fs';
-import {
-  getPublicKey,
-  nip17,
-  nip59,
-  nip19,
-  finalizeEvent,
-  nip42,
-} from 'nostr-tools';
+import * as nt from 'nostr-tools';
+const { getPublicKey, nip19, finalizeEvent, nip42 } = nt;
 
 const RELAY = process.env.RELAY_NIP17 || 'wss://nip17.tomdwyer.uk';
 const TARGET_NPUB = process.env.TARGET_NPUB || 'npub1fu64hh9hes90w2808n8tjc2ajp5yhddjef0ctx4s7zmsgp6cwx4qgy4eg9';
@@ -35,7 +29,7 @@ function loadAdminSkHex() {
   throw new Error('ADMIN_SK_HEX not found in web/config.js (set SENDER_SK_HEX env)');
 }
 
-const gift = nip17 || nip59;
+const gift = nt.nip17 || nt.nip59;
 if (!gift?.wrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
 
 function now() { return Math.floor(Date.now() / 1000); }
