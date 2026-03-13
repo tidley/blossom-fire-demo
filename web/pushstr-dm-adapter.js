@@ -69,11 +69,56 @@ export function parseDmJsonPushstrCompat(rawContent) {
   return { msg: null, parseMode: 'non_json', raw };
 }
 
+function parseRumorEventMaybe(rawContent) {
+  const raw = String(rawContent || '').trim();
+  if (!raw) return null;
+  try {
+    const maybe = JSON.parse(raw);
+    if (maybe && typeof maybe === 'object' && Number.isFinite(maybe.kind) && typeof maybe.content === 'string') {
+      return maybe;
+    }
+  } catch {}
+  return null;
+}
+
 export function unwrapDmJsonPushstrCompat({ recipientSk, wrapEv }) {
   if (!giftWrap?.unwrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
+
+  const stage = { step: 'gift_decrypt' };
   const inner = giftWrap.unwrapEvent(wrapEv, toPrivkeyInput(recipientSk));
-  const parsed = parseDmJsonPushstrCompat(inner?.content || '');
-  return { inner, msg: parsed.msg, parseMode: parsed.parseMode, rawContent: parsed.raw };
+
+  stage.step = 'inner_verify';
+  let verified = false;
+  try {
+    verified = typeof nostrTools.verifyEvent === 'function' ? !!nostrTools.verifyEvent(inner) : false;
+  } catch {
+    verified = false;
+  }
+
+  stage.step = 'inner_parse';
+  let parsed = parseDmJsonPushstrCompat(inner?.content || '');
+
+  // Pushstr-like sealed rumor handling: if inner content itself is a serialized event,
+  // parse that and then parse its content as app JSON.
+  let rumor = null;
+  const parsedLooksLikeRumorEvent = parsed.msg && typeof parsed.msg === 'object' && Number.isFinite(parsed.msg.kind) && typeof parsed.msg.content === 'string' && !parsed.msg.type;
+  if (!parsed.msg || parsedLooksLikeRumorEvent) {
+    stage.step = 'rumor_parse';
+    rumor = parsedLooksLikeRumorEvent ? parsed.msg : parseRumorEventMaybe(inner?.content || '');
+    if (rumor?.content) {
+      parsed = parseDmJsonPushstrCompat(rumor.content);
+    }
+  }
+
+  return {
+    inner: rumor || inner,
+    outerInner: inner,
+    msg: parsed.msg,
+    parseMode: parsed.parseMode,
+    rawContent: parsed.raw,
+    verified,
+    stage: stage.step,
+  };
 }
 
 function classifyUnwrapError(err) {

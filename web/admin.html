@@ -112,6 +112,8 @@
           <div><span class="k">dropped (type / stream):</span> <span class="v" id="diagDropType">0</span> / <span class="v" id="diagDropStream">0</span></div>
           <div><span class="k">control cmds:</span> <span class="v" id="diagControlCmds">0</span></div>
           <div><span class="k">unwrap fail buckets:</span> <span class="v" id="diagFailBuckets">—</span></div>
+          <div><span class="k">unwrap stage:</span> <span class="v" id="diagUnwrapStage">—</span></div>
+          <div><span class="k">inner sender:</span> <span class="v" id="diagInnerSender">—</span></div>
         </div>
 
         <div class="row" style="justify-content:space-between; align-items:center; margin-top:8px;">
@@ -185,6 +187,8 @@
       const diagDropStreamEl = document.querySelector('#diagDropStream');
       const diagControlCmdsEl = document.querySelector('#diagControlCmds');
       const diagFailBucketsEl = document.querySelector('#diagFailBuckets');
+      const diagUnwrapStageEl = document.querySelector('#diagUnwrapStage');
+      const diagInnerSenderEl = document.querySelector('#diagInnerSender');
       const previewEl = document.querySelector('#preview');
       const previewVideoEl = document.querySelector('#previewVideo');
 
@@ -637,10 +641,14 @@
           const { inner, msg } = unwrapped;
           dmStats.unwrapOk += 1;
           renderDmStats();
+          if (USE_PUSHSTR_DM_ADMIN) {
+            diagUnwrapStageEl.textContent = `${unwrapped.stage || 'unknown'} | ${unwrapped.parseMode || 'none'} | verify:${unwrapped.verified ? 'ok' : 'skip/fail'}`;
+          }
           diagLastUnwrapEl.textContent = USE_PUSHSTR_DM_ADMIN
             ? `ok (${unwrapped.parseMode || 'pushstr'})`
             : 'ok';
           const senderNpubAll = npubFromPubkey(inner.pubkey);
+          diagInnerSenderEl.textContent = `${senderNpubAll.slice(0,14)}…${senderNpubAll.slice(-6)}`;
           const shortSenderAll = `${senderNpubAll.slice(0,14)}…${senderNpubAll.slice(-6)}`;
           const rawAll = String((unwrapped?.rawContent ?? inner?.content) || '').trim();
 
@@ -757,6 +765,7 @@
           const bucket = bucketUnwrapError(e);
           dmStats.failBuckets[bucket] = (dmStats.failBuckets[bucket] || 0) + 1;
           renderDmStats();
+          diagUnwrapStageEl.textContent = `fail:${bucket}`;
           diagLastUnwrapEl.textContent = `fail: ${e.message || e}`;
           audit(`dm raw ${senderRaw}: ${rawEnvelope || '<empty>'}`, 'muted');
           audit(`dm unwrap skipped/non-json: ${e.message || e}`, 'muted');
