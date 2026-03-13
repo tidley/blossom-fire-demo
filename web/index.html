@@ -27,7 +27,7 @@
       .stream-row { display: flex; gap: 10px; align-items: center; margin: 0 0 12px; flex-wrap: wrap; }
       .stream-row input { background: #1a2233; color: #e6edf3; border: 1px solid #3a4354; border-radius: 8px; padding: 8px 10px; min-width: 180px; }
       .qr { margin-top: 10px; display: grid; gap: 8px; justify-items: start; }
-      .qr img { border: 1px solid #3a4354; border-radius: 8px; background: #fff; width: 180px; height: 180px; }
+      .qr img { border: 1px solid #3a4354; border-radius: 10px; background: #fff; width: 360px; height: 360px; }
       .mini { font-size: 12px; color: #9aa7bd; }
     </style>
   </head>
@@ -122,11 +122,11 @@
 
         const framesAbs = new URL(viewFramesLink.getAttribute('href'), location.origin).toString();
         viewFramesUrl.textContent = framesAbs;
-        viewFramesQr.src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(framesAbs)}`;
+        viewFramesQr.src = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=${encodeURIComponent(framesAbs)}`;
 
         const abs = new URL(viewVideoLink.getAttribute('href'), location.origin).toString();
         viewVideoUrl.textContent = abs;
-        viewVideoQr.src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(abs)}`;
+        viewVideoQr.src = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=${encodeURIComponent(abs)}`;
 
         setQueryStream(stream);
       }
