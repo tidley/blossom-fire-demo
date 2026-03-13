@@ -81,6 +81,28 @@ function parseRumorEventMaybe(rawContent) {
   return null;
 }
 
+function decryptNip44WithFallback(recipientSk, senderPub, cipherText) {
+  const skHex = toPrivkeyInput(recipientSk);
+  const conv = nostrTools?.nip44?.getConversationKey?.(skHex, senderPub);
+  if (!conv) throw new Error('nip44 conversation key unavailable');
+
+  const attempts = [
+    () => nostrTools?.nip44?.decrypt?.(cipherText, conv),
+    () => nostrTools?.nip44?.v2?.decrypt?.(cipherText, conv),
+  ];
+
+  let lastErr = null;
+  for (const fn of attempts) {
+    try {
+      const out = fn?.();
+      if (typeof out === 'string') return out;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('nip44 decrypt failed');
+}
+
 export function unwrapDmJsonPushstrCompat({ recipientSk, wrapEv }) {
   if (!giftWrap?.unwrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
 
@@ -105,6 +127,21 @@ export function unwrapDmJsonPushstrCompat({ recipientSk, wrapEv }) {
   if (!parsed.msg || parsedLooksLikeRumorEvent) {
     stage.step = 'rumor_parse';
     rumor = parsedLooksLikeRumorEvent ? parsed.msg : parseRumorEventMaybe(inner?.content || '');
+
+    // Pushstr sealed-event path: kind 13 content is still nip44 encrypted rumor JSON.
+    if (rumor?.kind === 13 && typeof rumor?.content === 'string' && rumor?.pubkey) {
+      stage.step = 'rumor_decrypt';
+      try {
+        const rumorJson = decryptNip44WithFallback(recipientSk, rumor.pubkey, rumor.content);
+        const parsedRumor = parseRumorEventMaybe(rumorJson);
+        if (parsedRumor) {
+          rumor = parsedRumor;
+        }
+      } catch {
+        // keep existing rumor as-is and let downstream diagnostics classify failure/no-json
+      }
+    }
+
     if (rumor?.content) {
       parsed = parseDmJsonPushstrCompat(rumor.content);
     }
