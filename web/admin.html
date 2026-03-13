@@ -26,6 +26,9 @@
       .allow-big { transform: scale(1.6); transform-origin: center; accent-color: #7ab8ff; margin-left: 8px; }
       .audit { max-height: 220px; overflow: auto; border:1px solid #253043; border-radius:8px; padding:8px; margin-top:8px; background:#0f1522; }
       .audit .line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color:#b9c7e6; padding: 3px 0; border-bottom: 1px dashed #223049; }
+      .hint { border:1px solid #253043; border-radius:8px; padding:8px; margin:8px 0; background:#0f1522; }
+      .hint ul { margin:6px 0 0 18px; color:#b9c7e6; }
+      .hint li { margin:4px 0; }
       .admin-qr { display:grid; gap:8px; justify-items:start; margin-bottom:10px; }
       .admin-qr img { width: 340px; height: 340px; border:1px solid #3a4354; border-radius: 10px; background:#fff; }
           .titlebar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
@@ -69,21 +72,31 @@
       </div>
 
       <div class="box">
-        <div class="row" style="justify-content: space-between;">
+        <div class="row" style="justify-content: space-between; align-items:center;">
           <div><b>Viewers</b></div>
-          <button id="clear">Clear list</button>
+          <div class="row">
+            <button id="clear">Clear</button>
+          </div>
         </div>
+
         <div class="row" style="margin:8px 0;">
-          <label class="small" for="controllers" style="min-width:120px;">Controller npubs</label>
+          <label class="small" for="controllers" style="min-width:120px;">Controllers</label>
           <input id="controllers" type="text" style="flex:1; min-width:220px;" placeholder="npub1...,npub1..." />
           <button id="saveControllers" type="button">Save</button>
         </div>
-        <div class="small">Only controller npubs can toggle viewers via DM number commands.</div>
-        <div class="small">When ON, admin forwards keys for new frames to that viewer.</div>
-        <div class="small">DM control: send admin a DM containing a viewer number (e.g. <code>2</code>) to target that viewer.</div>
-        <div class="small">Admin can always change immediately. Send <code>0</code> from admin to unlock/lock threshold mode. When unlocked, non-admin controllers require 2 votes to switch a viewer.</div>
+
+        <div class="hint">
+          <div class="small"><b>DM controls</b></div>
+          <ul>
+            <li><code>2</code> → toggle viewer #2</li>
+            <li><code>2 on</code> / <code>2 off</code> → set viewer state</li>
+            <li><code>0</code> (admin only) → toggle threshold mode lock/unlock</li>
+          </ul>
+        </div>
+
         <div id="viewers"></div>
-        <div class="small" style="margin-top:8px;">Audit log (DM control + actions)</div>
+
+        <div class="small" style="margin-top:8px;"><b>Audit log</b></div>
         <div id="audit" class="audit"></div>
       </div>
     </div>
