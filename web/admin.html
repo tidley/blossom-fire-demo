@@ -89,10 +89,11 @@
     </div>
 
     <script type="module">
-      import { TAG_REQ, TAG_DEMO, ADMIN_SK_HEX } from './config.js';
+      import { TAG_REQ, TAG_DEMO, ADMIN_SK_HEX, RELAYS } from './config.js';
       import { blobFetch } from './blob.js';
       import { aesGcmDecrypt, b64decode, b64encode, utf8Bytes } from './crypto.js';
       import { createThresholdController } from './context-threshold.js';
+      import { finalizeEvent, nip42 } from 'https://esm.sh/nostr-tools@2.10.2';
       import {
         getStreamId,
         skFromHex,
@@ -522,14 +523,10 @@
         }
       });
 
-      // Subscribe to broadcaster→admin key DMs (NIP-17 gift-wrap kind 1059)
-      sub([
-        {
-          kinds: [1059],
-          '#p': [adminPub],
-          limit: 500,
-        }
-      ], async (ev) => {
+      const seenDmIds = new Set();
+      async function processWrappedDm(ev) {
+        if (!ev?.id || seenDmIds.has(ev.id)) return;
+        seenDmIds.add(ev.id);
         try {
           const { inner, msg } = nip17UnwrapJson(adminSk, ev);
           const senderNpubAll = npubFromPubkey(inner.pubkey);
@@ -645,7 +642,60 @@
           audit(`dm unwrap error: ${e.message || e}`);
           setStatus(`error decrypting adminkey dm: ${e.message || e}`);
         }
-      });
+      }
+
+      // Subscribe to DMs via pool (works on non-auth relays)
+      sub([
+        { kinds: [1059], '#p': [adminPub], limit: 500 }
+      ], async (ev) => { await processWrappedDm(ev); });
+
+      // Additional direct websocket auth subscription for auth-required relays.
+      function subscribeDmWithAuth(relayUrl) {
+        const ws = new WebSocket(relayUrl);
+        let subId = `adm-${Date.now()}`;
+        const sendReq = () => ws.send(JSON.stringify(['REQ', subId, { kinds: [1059], '#p': [adminPub], limit: 500 }]));
+
+        ws.onopen = () => sendReq();
+        ws.onmessage = async (m) => {
+          let msg;
+          try { msg = JSON.parse(m.data); } catch { return; }
+
+          if (msg[0] === 'AUTH') {
+            try {
+              const authUnsigned = { ...nip42.makeAuthEvent(relayUrl, msg[1]), pubkey: adminPub };
+              const auth = finalizeEvent(authUnsigned, adminSk);
+              ws.send(JSON.stringify(['AUTH', auth]));
+              subId = `adm-${Date.now()}-a`;
+              setTimeout(() => { try { sendReq(); } catch {} }, 50);
+            } catch (e) {
+              audit(`auth failed ${relayUrl}: ${e.message || e}`);
+            }
+            return;
+          }
+
+          if (msg[0] === 'CLOSED' && String(msg[2] || '').includes('auth-required')) {
+            subId = `adm-${Date.now()}-r`;
+            setTimeout(() => { try { sendReq(); } catch {} }, 50);
+            return;
+          }
+
+          if (msg[0] === 'EVENT' && msg[1] === subId) {
+            await processWrappedDm(msg[2]);
+          }
+        };
+
+        ws.onerror = () => {
+          audit(`dm ws error on ${relayUrl}`);
+        };
+
+        ws.onclose = () => {
+          setTimeout(() => subscribeDmWithAuth(relayUrl), 2000);
+        };
+      }
+
+      // Ensure auth-required relay works for DM receive.
+      const authRelay = RELAYS.find(r => r.startsWith('wss://nip17.tomdwyer.uk'));
+      if (authRelay) subscribeDmWithAuth(authRelay);
 
       async function tryRenderPreview(frameId) {
         const rec = adminFrameKeys.get(frameId);
