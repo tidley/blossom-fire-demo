@@ -22,6 +22,10 @@
       button { padding: 6px 10px; cursor: pointer; }
       video, canvas, img { max-width: 100%; border: 1px solid #2f3540; border-radius: 8px; background: #000; }
       .viewer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid #253043; }
+      .viewer .idx { color:#9aa7bd; min-width: 24px; display:inline-block; text-align:right; margin-right:8px; }
+      .allow-big { transform: scale(1.6); transform-origin: center; accent-color: #7ab8ff; margin-left: 8px; }
+      .audit { max-height: 220px; overflow: auto; border:1px solid #253043; border-radius:8px; padding:8px; margin-top:8px; background:#0f1522; }
+      .audit .line { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color:#b9c7e6; padding: 3px 0; border-bottom: 1px dashed #223049; }
           .titlebar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
       .stream-jump { display:flex; align-items:center; gap:8px; }
       .stream-jump input { width: 140px; padding: 6px 8px; }
@@ -62,7 +66,10 @@
           <button id="clear">Clear list</button>
         </div>
         <div class="small">When ON, admin forwards keys for new frames to that viewer.</div>
+        <div class="small">DM control: send admin a DM containing a viewer number (e.g. <code>2</code>) to toggle that viewer.</div>
         <div id="viewers"></div>
+        <div class="small" style="margin-top:8px;">Audit log (DM control + actions)</div>
+        <div id="audit" class="audit"></div>
       </div>
     </div>
 
@@ -111,6 +118,7 @@
       const lastKeyEl = document.querySelector('#lastKey');
       const lastSourceEl = document.querySelector('#lastSource');
       const viewersEl = document.querySelector('#viewers');
+      const auditEl = document.querySelector('#audit');
       const previewEl = document.querySelector('#preview');
       const previewVideoEl = document.querySelector('#previewVideo');
 
@@ -176,6 +184,15 @@
 
       function setStatus(s) { statusEl.textContent = s; }
 
+      function audit(line) {
+        const ts = new Date().toISOString().replace('T', ' ').replace('Z', '');
+        const el = document.createElement('div');
+        el.className = 'line';
+        el.textContent = `[${ts}] ${line}`;
+        auditEl.prepend(el);
+        while (auditEl.children.length > 200) auditEl.removeChild(auditEl.lastChild);
+      }
+
       function allowedFingerprint() {
         return Array.from(viewers.entries())
           .filter(([, v]) => !!v.allowed)
@@ -236,38 +253,65 @@
         publish(dm);
       }
 
+      function getSortedViewerEntries() {
+        return Array.from(viewers.entries())
+          .sort((a,b) => (b[1].lastSeen||0)-(a[1].lastSeen||0));
+      }
+
+      async function setViewerAllowed(pub, allowed, source = 'ui') {
+        const v = viewers.get(pub);
+        if (!v) return false;
+        v.allowed = !!allowed;
+        v.lastSeen = Math.floor(Date.now()/1000);
+        viewers.set(pub, v);
+
+        if (!v.allowed) {
+          lastSentKeyIdByViewer.delete(pub);
+        } else {
+          // New allow should immediately deliver latest decrypt metadata/key.
+          await sendLatestToViewer(pub, { forceKey: true });
+        }
+        await maybeRotateOnViewerChange();
+        renderViewers();
+        const shortNpub = `${v.npub.slice(0, 14)}…${v.npub.slice(-6)}`;
+        audit(`toggle(${source}) ${shortNpub} => ${v.allowed ? 'ON' : 'OFF'}`);
+        return true;
+      }
+
+      async function toggleViewerByIndex(index, source = 'dm') {
+        const entries = getSortedViewerEntries();
+        const idx = Number(index);
+        if (!Number.isFinite(idx) || idx < 1 || idx > entries.length) {
+          audit(`toggle(${source}) invalid index: ${index}`);
+          return false;
+        }
+        const [pub, v] = entries[idx - 1];
+        return setViewerAllowed(pub, !v.allowed, source);
+      }
+
       function renderViewers() {
         viewersEl.innerHTML = '';
-        const entries = Array.from(viewers.entries())
-          .sort((a,b) => (b[1].lastSeen||0)-(a[1].lastSeen||0));
+        const entries = getSortedViewerEntries();
         const allowedCount = entries.filter(([,v]) => !!v.allowed).length;
         allowedCountEl.textContent = String(allowedCount);
 
-        for (const [pub, v] of entries) {
+        entries.forEach(([pub, v], i) => {
           const row = document.createElement('div');
           row.className = 'viewer';
 
           const left = document.createElement('div');
           const shortNpub = `${v.npub.slice(0, 14)}…${v.npub.slice(-6)}`;
-          left.innerHTML = `<div><code>${shortNpub}</code></div><div class="small">last: ${new Date((v.lastSeen||0)*1000).toLocaleTimeString()}</div>`;
+          left.innerHTML = `<div><span class="idx">${i + 1}.</span><code>${shortNpub}</code></div><div class="small">last: ${new Date((v.lastSeen||0)*1000).toLocaleTimeString()}</div>`;
 
           const right = document.createElement('div');
           right.className = 'row';
 
           const cb = document.createElement('input');
           cb.type = 'checkbox';
+          cb.className = 'allow-big';
           cb.checked = !!v.allowed;
           cb.onchange = async () => {
-            v.allowed = cb.checked;
-            v.lastSeen = Math.floor(Date.now()/1000);
-            viewers.set(pub, v);
-            if (!v.allowed) {
-              lastSentKeyIdByViewer.delete(pub);
-            } else {
-              // New allow should immediately deliver latest decrypt metadata/key.
-              await sendLatestToViewer(pub, { forceKey: true });
-            }
-            await maybeRotateOnViewerChange();
+            await setViewerAllowed(pub, cb.checked, 'ui');
           };
 
           right.appendChild(document.createTextNode('allow '));
@@ -276,13 +320,14 @@
           row.appendChild(left);
           row.appendChild(right);
           viewersEl.appendChild(row);
-        }
+        });
       }
 
       document.querySelector('#clear').onclick = async () => {
         viewers.clear();
         lastSentKeyIdByViewer.clear();
         renderViewers();
+        audit('cleared viewer list');
         await maybeRotateOnViewerChange();
       };
 
@@ -319,6 +364,23 @@
       ], async (ev) => {
         try {
           const { inner, msg } = nip17UnwrapJson(adminSk, ev);
+
+          // DM control path (from any sender): send a number like "2" to toggle viewer #2.
+          // Also supports JSON: {"type":"toggle_viewer","streamId":"...","index":2}
+          const raw = String(inner?.content || '').trim();
+          const numberText = /^\d+$/.test(raw) ? Number(raw) : null;
+          const jsonToggle = msg && typeof msg === 'object' && msg.type === 'toggle_viewer'
+            ? Number(msg.index ?? msg.n ?? msg.viewer)
+            : null;
+          const controlIndex = Number.isFinite(numberText) ? numberText : (Number.isFinite(jsonToggle) ? jsonToggle : null);
+
+          if (controlIndex !== null) {
+            const shortSender = `${npubFromPubkey(inner.pubkey).slice(0,14)}…${npubFromPubkey(inner.pubkey).slice(-6)}`;
+            audit(`dm command from ${shortSender}: toggle #${controlIndex}`);
+            await toggleViewerByIndex(controlIndex, 'dm');
+            return;
+          }
+
           if (!msg || msg.streamId !== streamId) return;
 
           if (msg.type === 'access_req') {
