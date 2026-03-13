@@ -71,6 +71,12 @@
           <div><b>Viewers</b></div>
           <button id="clear">Clear list</button>
         </div>
+        <div class="row" style="margin:8px 0;">
+          <label class="small" for="controllers" style="min-width:120px;">Controller npubs</label>
+          <input id="controllers" type="text" style="flex:1; min-width:220px;" placeholder="npub1...,npub1..." />
+          <button id="saveControllers" type="button">Save</button>
+        </div>
+        <div class="small">Only controller npubs can toggle viewers via DM number commands.</div>
         <div class="small">When ON, admin forwards keys for new frames to that viewer.</div>
         <div class="small">DM control: send admin a DM containing a viewer number (e.g. <code>2</code>) to toggle that viewer.</div>
         <div id="viewers"></div>
@@ -80,14 +86,16 @@
     </div>
 
     <script type="module">
-      import { TAG_REQ, ADMIN_SK_HEX } from './config.js';
+      import { TAG_REQ, TAG_DEMO, ADMIN_SK_HEX } from './config.js';
       import { blobFetch } from './blob.js';
       import { aesGcmDecrypt, b64decode, b64encode, utf8Bytes } from './crypto.js';
+      import { createAccessPolicyVM } from './contextvm.js';
       import {
         getStreamId,
         skFromHex,
         pubkeyFromSk,
         npubFromPubkey,
+        makeSignedEventUnsigned,
         publish,
         sub,
         nip17UnwrapJson,
@@ -113,17 +121,18 @@
       }
 
 
+      const statusEl = document.querySelector('#status');
+      const adminNpubQrEl = document.querySelector('#adminNpubQr');
+      const adminNpubTextEl = document.querySelector('#adminNpubText');
+      const controllersEl = document.querySelector('#controllers');
+      const saveControllersEl = document.querySelector('#saveControllers');
+      const allowedCountEl = document.querySelector('#allowedCount');
       const adminSk = skFromHex(ADMIN_SK_HEX);
       const adminPub = pubkeyFromSk(adminSk);
       const adminNpub = npubFromPubkey(adminPub);
       document.querySelector('#adminNpub').textContent = `${adminNpub.slice(0,14)}…${adminNpub.slice(-6)}`;
       adminNpubTextEl.textContent = adminNpub;
       adminNpubQrEl.src = `https://api.qrserver.com/v1/create-qr-code/?size=700x700&data=${encodeURIComponent(adminNpub)}`;
-
-      const statusEl = document.querySelector('#status');
-      const adminNpubQrEl = document.querySelector('#adminNpubQr');
-      const adminNpubTextEl = document.querySelector('#adminNpubText');
-      const allowedCountEl = document.querySelector('#allowedCount');
       const lastFrameEl = document.querySelector('#lastFrame');
       const lastKeyEl = document.querySelector('#lastKey');
       const lastSourceEl = document.querySelector('#lastSource');
@@ -136,6 +145,29 @@
       const viewers = new Map();
       const broadcasters = new Set();
       const lastSentKeyIdByViewer = new Map();
+
+      const CONTROLLERS_KEY = `context.controllers.${streamId}`;
+      let controllerNpubs = new Set();
+      function normalizeControllerList(text) {
+        return new Set(String(text || '')
+          .split(',')
+          .map(s => s.trim())
+          .filter(s => s.startsWith('npub1')));
+      }
+      function loadControllers() {
+        const raw = localStorage.getItem(CONTROLLERS_KEY) || adminNpub;
+        controllerNpubs = normalizeControllerList(raw);
+        if (!controllerNpubs.size) controllerNpubs.add(adminNpub);
+        controllersEl.value = Array.from(controllerNpubs).join(',');
+      }
+      function saveControllers() {
+        controllerNpubs = normalizeControllerList(controllersEl.value);
+        if (!controllerNpubs.size) controllerNpubs.add(adminNpub);
+        localStorage.setItem(CONTROLLERS_KEY, Array.from(controllerNpubs).join(','));
+        controllersEl.value = Array.from(controllerNpubs).join(',');
+      }
+      loadControllers();
+      saveControllersEl.onclick = () => { saveControllers(); audit('updated controller allowlist'); };
 
       // frameId -> { keyBytes, blobHash, mime, keyId }
       const adminFrameKeys = new Map();
@@ -203,6 +235,23 @@
         while (auditEl.children.length > 200) auditEl.removeChild(auditEl.lastChild);
       }
 
+      async function publishTransitionLog(transition) {
+        try {
+          const ev = makeSignedEventUnsigned(1, adminSk, {
+            content: JSON.stringify({ type: 'contextvm_transition', streamId, transition }),
+            tags: [
+              ['t', TAG_DEMO],
+              ['t', 'contextvm'],
+              ['d', streamId],
+              ['k', 'contextvm_transition'],
+            ],
+          });
+          await publish(ev);
+        } catch (e) {
+          audit(`transition publish failed: ${e.message || e}`);
+        }
+      }
+
       function allowedFingerprint() {
         return Array.from(viewers.entries())
           .filter(([, v]) => !!v.allowed)
@@ -268,6 +317,24 @@
           .sort((a,b) => (b[1].lastSeen||0)-(a[1].lastSeen||0));
       }
 
+      function resolveViewerByIndex(index) {
+        const entries = getSortedViewerEntries();
+        const idx = Number(index);
+        if (!Number.isFinite(idx) || idx < 1 || idx > entries.length) return null;
+        const [pub, viewer] = entries[idx - 1];
+        return { index: idx, pub, viewer };
+      }
+
+      function isSenderAllowed(senderNpub) {
+        return controllerNpubs.has(senderNpub);
+      }
+
+      const accessVm = createAccessPolicyVM({
+        streamId,
+        isSenderAllowed,
+        resolveViewerByIndex,
+      });
+
       async function setViewerAllowed(pub, allowed, source = 'ui') {
         const v = viewers.get(pub);
         if (!v) return false;
@@ -288,15 +355,23 @@
         return true;
       }
 
-      async function toggleViewerByIndex(index, source = 'dm') {
-        const entries = getSortedViewerEntries();
-        const idx = Number(index);
-        if (!Number.isFinite(idx) || idx < 1 || idx > entries.length) {
-          audit(`toggle(${source}) invalid index: ${index}`);
+      async function toggleViewerByIndex(index, source = 'dm', actorNpub = adminNpub) {
+        const { ok, reason, action, transition } = accessVm.transition({
+          type: 'toggle_by_index',
+          index,
+          source,
+          actor: actorNpub,
+        });
+
+        if (!ok) {
+          audit(`toggle(${source}) rejected: ${reason} (actor=${actorNpub}, index=${index})`);
+          await publishTransitionLog(transition);
           return false;
         }
-        const [pub, v] = entries[idx - 1];
-        return setViewerAllowed(pub, !v.allowed, source);
+
+        const changed = await setViewerAllowed(action.viewerPub, action.allowed, source);
+        await publishTransitionLog({ ...transition, applied: !!changed });
+        return changed;
       }
 
       function renderViewers() {
@@ -385,9 +460,10 @@
           const controlIndex = Number.isFinite(numberText) ? numberText : (Number.isFinite(jsonToggle) ? jsonToggle : null);
 
           if (controlIndex !== null) {
-            const shortSender = `${npubFromPubkey(inner.pubkey).slice(0,14)}…${npubFromPubkey(inner.pubkey).slice(-6)}`;
+            const senderNpub = npubFromPubkey(inner.pubkey);
+            const shortSender = `${senderNpub.slice(0,14)}…${senderNpub.slice(-6)}`;
             audit(`dm command from ${shortSender}: toggle #${controlIndex}`);
-            await toggleViewerByIndex(controlIndex, 'dm');
+            await toggleViewerByIndex(controlIndex, 'dm', senderNpub);
             return;
           }
 
