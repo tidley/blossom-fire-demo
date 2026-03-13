@@ -111,6 +111,7 @@
           <div><span class="k">adminkey accepted:</span> <span class="v" id="diagAdminKeyAccepted">0</span></div>
           <div><span class="k">dropped (type / stream):</span> <span class="v" id="diagDropType">0</span> / <span class="v" id="diagDropStream">0</span></div>
           <div><span class="k">control cmds:</span> <span class="v" id="diagControlCmds">0</span></div>
+          <div><span class="k">unwrap fail buckets:</span> <span class="v" id="diagFailBuckets">—</span></div>
         </div>
 
         <div class="row" style="justify-content:space-between; align-items:center; margin-top:8px;">
@@ -183,6 +184,7 @@
       const diagDropTypeEl = document.querySelector('#diagDropType');
       const diagDropStreamEl = document.querySelector('#diagDropStream');
       const diagControlCmdsEl = document.querySelector('#diagControlCmds');
+      const diagFailBucketsEl = document.querySelector('#diagFailBuckets');
       const previewEl = document.querySelector('#preview');
       const previewVideoEl = document.querySelector('#previewVideo');
 
@@ -577,7 +579,21 @@
       });
 
       const seenDmIds = new Set();
-      const dmStats = { seen: 0, unwrapOk: 0, adminkeyAccepted: 0, droppedType: 0, droppedStream: 0, controlCmds: 0 };
+      const dmStats = {
+        seen: 0,
+        unwrapOk: 0,
+        adminkeyAccepted: 0,
+        droppedType: 0,
+        droppedStream: 0,
+        controlCmds: 0,
+        failBuckets: {
+          invalid_payload_length: 0,
+          invalid_base64: 0,
+          unknown_encryption_version: 0,
+          json_parse: 0,
+          other: 0,
+        },
+      };
       function renderDmStats() {
         diagDmSeenEl.textContent = String(dmStats.seen);
         diagDmUnwrapOkEl.textContent = String(dmStats.unwrapOk);
@@ -585,8 +601,19 @@
         diagDropTypeEl.textContent = String(dmStats.droppedType);
         diagDropStreamEl.textContent = String(dmStats.droppedStream);
         diagControlCmdsEl.textContent = String(dmStats.controlCmds);
+        const b = dmStats.failBuckets;
+        diagFailBucketsEl.textContent = `payload:${b.invalid_payload_length} b64:${b.invalid_base64} ver:${b.unknown_encryption_version} json:${b.json_parse} other:${b.other}`;
       }
       renderDmStats();
+
+      function bucketUnwrapError(err) {
+        const m = String(err?.message || err || '').toLowerCase();
+        if (m.includes('invalid payload length')) return 'invalid_payload_length';
+        if (m.includes('invalid base64')) return 'invalid_base64';
+        if (m.includes('unknown encryption version')) return 'unknown_encryption_version';
+        if (m.includes('json.parse')) return 'json_parse';
+        return 'other';
+      }
 
       async function processWrappedDm(ev, relaySource = 'pool') {
         if (!ev?.id || seenDmIds.has(ev.id)) return;
@@ -595,6 +622,11 @@
         renderDmStats();
         diagLastEventEl.textContent = ev.id;
         diagLastRelayEl.textContent = relaySource;
+
+        const senderRawShort = ev?.pubkey ? `${ev.pubkey.slice(0,12)}…${ev.pubkey.slice(-8)}` : 'unknown';
+        const pTags = Array.isArray(ev?.tags) ? ev.tags.filter(t => t?.[0] === 'p').map(t => (t?.[1] || '').slice(0,10)).join(',') : '';
+        audit(`dm evt kind=${ev?.kind ?? '?'} from=${senderRawShort} p=[${pTags || '-'}]`, 'muted');
+
         try {
           const unwrapped = USE_PUSHSTR_DM_ADMIN
             ? unwrapDmJsonPushstrCompatAdmin({ recipientSk: adminSk, wrapEv: ev })
@@ -722,6 +754,9 @@
         } catch (e) {
           const senderRaw = ev?.pubkey ? `${ev.pubkey.slice(0,12)}…${ev.pubkey.slice(-8)}` : 'unknown';
           const rawEnvelope = String(ev?.content || '').slice(0, 900);
+          const bucket = bucketUnwrapError(e);
+          dmStats.failBuckets[bucket] = (dmStats.failBuckets[bucket] || 0) + 1;
+          renderDmStats();
           diagLastUnwrapEl.textContent = `fail: ${e.message || e}`;
           audit(`dm raw ${senderRaw}: ${rawEnvelope || '<empty>'}`, 'muted');
           audit(`dm unwrap skipped/non-json: ${e.message || e}`, 'muted');

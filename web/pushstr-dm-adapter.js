@@ -76,17 +76,66 @@ export function unwrapDmJsonPushstrCompat({ recipientSk, wrapEv }) {
   return { inner, msg: parsed.msg, parseMode: parsed.parseMode, rawContent: parsed.raw };
 }
 
+function classifyUnwrapError(err) {
+  const m = String(err?.message || err || '').toLowerCase();
+  if (m.includes('invalid payload length')) return 'invalid_payload_length';
+  if (m.includes('invalid base64')) return 'invalid_base64';
+  if (m.includes('unknown encryption version')) return 'unknown_encryption_version';
+  if (m.includes('json.parse')) return 'json_parse';
+  return 'other';
+}
+
+export function normalizeAdminKeyPayload(msg) {
+  if (!msg || typeof msg !== 'object') return null;
+  if (msg.type !== 'adminkey') return null;
+
+  const streamId = msg.streamId ?? msg.stream ?? null;
+  const frameId = Number(msg.frameId ?? msg.frame_id ?? msg.frame ?? NaN);
+  const x = msg.x ?? msg.hash ?? msg.blob_hash ?? null;
+  const k = msg.k ?? msg.key ?? null;
+  const key_id = msg.key_id ?? msg.keyId ?? 'default';
+  const m = msg.m ?? msg.mime ?? 'image/webp';
+  const alg = msg.alg ?? (msg.enc === 'none' ? 'none' : 'aes-gcm');
+  const enc = msg.enc ?? (alg === 'none' ? 'none' : 'nip44');
+
+  if (typeof streamId !== 'string' || !streamId.trim()) return null;
+  if (!Number.isFinite(frameId) || frameId <= 0) return null;
+  if (typeof x !== 'string' || x.length < 8) return null;
+
+  const isPlain = enc === 'none' || alg === 'none';
+  if (!isPlain && (typeof k !== 'string' || k.length < 8)) return null;
+
+  return {
+    type: 'adminkey',
+    streamId,
+    frameId,
+    x,
+    ...(isPlain ? {} : { k }),
+    key_id,
+    m,
+    alg,
+    enc,
+  };
+}
+
 export function unwrapDmJsonPushstrCompatAdmin({ recipientSk, wrapEv }) {
   try {
     const out = unwrapDmJsonPushstrCompat({ recipientSk, wrapEv });
-    return { ...out, classifier: out.msg ? 'ok' : `drop:${out.parseMode}` };
+    const normalized = normalizeAdminKeyPayload(out.msg);
+    const msg = normalized || out.msg;
+    return {
+      ...out,
+      msg,
+      classifier: msg ? 'ok' : `drop:${out.parseMode}`,
+      normalizedAdminKey: !!normalized,
+    };
   } catch (e) {
     return {
       inner: null,
       msg: null,
       parseMode: 'unwrap_error',
       rawContent: '',
-      classifier: 'drop:unwrap_error',
+      classifier: `drop:${classifyUnwrapError(e)}`,
       error: e,
     };
   }
