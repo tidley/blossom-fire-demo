@@ -685,8 +685,7 @@
         } catch (e) {
           console.error(e);
           diagLastUnwrapEl.textContent = `fail: ${e.message || e}`;
-          audit(`dm unwrap error: ${e.message || e}`, 'err');
-          setStatus(`error decrypting adminkey dm: ${e.message || e}`);
+          audit(`dm unwrap skipped/non-json: ${e.message || e}`, 'muted');
         }
       }
 
