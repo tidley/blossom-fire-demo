@@ -1,0 +1,18 @@
+demo.tomdwyer.uk {
+  @hls path /hls/*
+  handle @hls {
+    root * /srv/hls
+    file_server
+  }
+
+  root * /srv/web
+  file_server
+}
+
+blossom.tomdwyer.uk {
+  reverse_proxy blossom:3000
+}
+
+relay.tomdwyer.uk {
+  reverse_proxy relay:8080
+}

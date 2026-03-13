@@ -1,0 +1,46 @@
+services:
+  caddy:
+    image: caddy:2
+    container_name: demo-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web:/srv/web:ro
+      - ./data/hls:/srv/hls:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - blossom
+
+  blossom:
+    image: node:20-alpine
+    container_name: blossom-server
+    restart: unless-stopped
+    working_dir: /app
+    command: ["node", "server.js"]
+    environment:
+      PORT: "3000"
+      BLOB_DIR: "/data/blobs"
+      HLS_DIR: "/data/hls"
+    volumes:
+      - ./blob:/app
+      - ./data/blobs:/data/blobs
+      - ./data/hls:/data/hls
+
+  relay:
+    image: scsibug/nostr-rs-relay:latest
+    container_name: nostr-relay
+    restart: unless-stopped
+    command: ["/bin/sh", "-c", "./nostr-rs-relay --config /config/config.toml"]
+    environment:
+      RUST_LOG: info
+    volumes:
+      - ./relay:/config
+      - ./data/relay:/data
+
+volumes:
+  caddy_data:
+  caddy_config:

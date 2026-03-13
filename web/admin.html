@@ -5,28 +5,49 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Admin</title>
     <style>
-      body { font-family: system-ui, sans-serif; margin: 16px; }
+      :root { color-scheme: dark; }
+      body { font-family: system-ui, sans-serif; margin: 16px; background: #0b0e14; color: #e6edf3; }
+      .box { padding: 12px; border: 1px solid #2f3540; border-radius: 10px; background: #111826; }
+      .row { display: flex; gap: 12px; flex-wrap: wrap; }
+      .meta { display:grid; gap:8px; }
+      .kv { display:flex; justify-content:space-between; gap:12px; align-items:center; }
+      .label { color:#9aa7bd; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+      .value { font-weight:600; }
       .grid { display: grid; grid-template-columns: 1fr 420px; gap: 16px; align-items: start; }
       @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
-      .box { padding: 12px; border: 1px solid #ddd; border-radius: 8px; }
-      code { background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }
-      button { font-size: 16px; }
-      .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-      .viewer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid #eee; }
-      .small { color: #666; font-size: 12px; }
-      img { width: 100%; max-width: 720px; border: 1px solid #ddd; border-radius: 8px; }
-      input[type=checkbox] { transform: scale(1.3); }
+      code { background: #1a2233; color: #d2e0ff; padding: 2px 4px; border-radius: 4px; }
+      a { color: #7ab8ff; }
+      .small { color: #9aa7bd; font-size: 12px; }
+      button, input { font-size: 16px; background: #1a2233; color: #e6edf3; border: 1px solid #3a4354; border-radius: 6px; }
+      button { padding: 6px 10px; cursor: pointer; }
+      video, canvas, img { max-width: 100%; border: 1px solid #2f3540; border-radius: 8px; background: #000; }
+      .viewer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid #253043; }
+          .titlebar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+      .stream-jump { display:flex; align-items:center; gap:8px; }
+      .stream-jump input { width: 140px; padding: 6px 8px; }
+      .stream-jump button { padding: 6px 10px; }
     </style>
   </head>
   <body>
-    <h2>Admin (toggle viewer access)</h2>
+    <div class="titlebar">
+    <h2>Admin</h2>
+    <div class="stream-jump">
+      <label for="streamJump">Stream ID</label>
+      <input id="streamJump" type="text" value="" placeholder="auto" />
+      <button id="goStream" type="button">Go</button>
+    </div>
+  </div>
 
     <div class="grid">
       <div class="box">
-        <div class="row">
-          <div>Stream: <code id="stream"></code></div>
-          <div>Admin npub: <code id="adminNpub"></code></div>
-          <div>Status: <span id="status">connecting…</span></div>
+        <div class="meta">
+          <div class="kv"><span class="label">Stream</span><span class="value"><code id="stream"></code></span></div>
+          <div class="kv"><span class="label">Admin npub</span><span class="value"><code id="adminNpub"></code></span></div>
+          <div class="kv"><span class="label">Status</span><span class="value" id="status">connecting…</span></div>
+          <div class="kv"><span class="label">Allowed viewers</span><span class="value" id="allowedCount">0</span></div>
+          <div class="kv"><span class="label">Last frame</span><span class="value" id="lastFrame">—</span></div>
+          <div class="kv"><span class="label">Last key</span><span class="value" id="lastKey">—</span></div>
+          <div class="kv"><span class="label">Last broadcaster</span><span class="value" id="lastSource">—</span></div>
         </div>
         <div style="margin-top:10px;">
           <div class="row">
@@ -36,7 +57,7 @@
             </label>
           </div>
           <img id="preview" />
-          <video id="previewVid" controls autoplay playsinline muted style="display:none; width:100%; max-width:720px; margin-top:12px;"></video>
+          <video id="previewVideo" controls autoplay playsinline muted style="display:none; margin-top:10px;"></video>
         </div>
       </div>
 
@@ -51,36 +72,52 @@
     </div>
 
     <script type="module">
-      import { TAG_REQ, TAG_DEMO, ADMIN_SK_HEX } from './config.js';
+      import { TAG_REQ, ADMIN_SK_HEX } from './config.js';
       import { blobFetch } from './blob.js';
-      import { aesGcmDecrypt, utf8Bytes, sha256Bytes, b64encode } from './crypto.js';
-      import { deriveChunkKey } from './deriveChunkKey.js';
-      import { createAdmin } from './mls.js';
+      import { aesGcmDecrypt, b64decode, b64encode, utf8Bytes } from './crypto.js';
       import {
         getStreamId,
         skFromHex,
         pubkeyFromSk,
         npubFromPubkey,
-        makeSignedEventUnsigned,
         publish,
         sub,
-        nip44Encrypt,
+        nip17UnwrapJson,
+        nip17WrapJson,
       } from './util.js';
 
-      const streamId = getStreamId();
+      const streamId = (getStreamId() || 'demo1').trim() || 'demo1';
       document.querySelector('#stream').textContent = streamId;
+
+      const streamJumpEl = document.querySelector('#streamJump');
+      const goStreamEl = document.querySelector('#goStream');
+      if (streamJumpEl && goStreamEl) {
+        streamJumpEl.value = streamId;
+        const go = () => {
+          const next = (streamJumpEl.value || '').trim();
+          if (!next) return;
+          const u = new URL(location.href);
+          u.searchParams.set('stream', next);
+          location.href = u.toString();
+        };
+        goStreamEl.onclick = go;
+        streamJumpEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      }
+
 
       const adminSk = skFromHex(ADMIN_SK_HEX);
       const adminPub = pubkeyFromSk(adminSk);
-      document.querySelector('#adminNpub').textContent = npubFromPubkey(adminPub);
+      const adminNpub = npubFromPubkey(adminPub);
+      document.querySelector('#adminNpub').textContent = `${adminNpub.slice(0,14)}…${adminNpub.slice(-6)}`;
 
       const statusEl = document.querySelector('#status');
+      const allowedCountEl = document.querySelector('#allowedCount');
+      const lastFrameEl = document.querySelector('#lastFrame');
+      const lastKeyEl = document.querySelector('#lastKey');
+      const lastSourceEl = document.querySelector('#lastSource');
       const viewersEl = document.querySelector('#viewers');
       const previewEl = document.querySelector('#preview');
-      const previewVideoToggle = document.querySelector('#previewVideo');
-      const previewVidEl = document.querySelector('#previewVid');
-      previewVideoToggle.disabled = true; // video path not wired for MLS yet
-      previewVidEl.style.display = 'none';
+      const previewVideoEl = document.querySelector('#previewVideo');
 
       const { admin: mlsAdmin, kind: mlsKind, persist: persistAdmin } = await createAdmin(
         streamId,
@@ -100,26 +137,140 @@
 
       // viewerPubkeyHex -> { allowed, lastSeen, npub, kp, role, joined }
       const viewers = new Map();
+      const broadcasters = new Set();
+      const lastSentKeyIdByViewer = new Map();
 
-      // frameId -> { blobHash, mime }
-      const announced = new Map();
+      // frameId -> { keyBytes, blobHash, mime, keyId }
+      const adminFrameKeys = new Map();
+
+      // MSE preview for video chunks
+      const videoMimeCandidates = [
+        'video/webm; codecs="vp8"',
+        'video/webm; codecs="vp9"',
+        'video/webm; codecs="vp8,opus"',
+        'video/webm; codecs="vp9,opus"',
+        'video/webm',
+      ];
+      const previewMseMime = videoMimeCandidates.find(m => MediaSource.isTypeSupported(m));
+      let previewMs = null;
+      let previewSb = null;
+      const previewQueue = [];
+
+      function resetPreviewPipeline(reason = 'preview reset') {
+        previewSb = null;
+        previewMs = new MediaSource();
+        previewVideoEl.src = URL.createObjectURL(previewMs);
+        setStatus(`${reason}…`);
+
+        previewMs.addEventListener('sourceopen', () => {
+          if (!previewMseMime || previewSb) return;
+          previewSb = previewMs.addSourceBuffer(previewMseMime);
+          // Sequence mode is more tolerant when each chunk is an independently
+          // recorded WebM fragment with local timestamps.
+          previewSb.mode = 'sequence';
+          previewSb.addEventListener('updateend', pumpPreview);
+          pumpPreview();
+        }, { once: true });
+      }
+
+      function enqueuePreview(bytes) {
+        previewQueue.push(bytes);
+        pumpPreview();
+      }
+
+      function pumpPreview() {
+        if (!previewSb || previewSb.updating) return;
+        if (previewQueue.length === 0) return;
+        const next = previewQueue.shift();
+        try {
+          previewSb.appendBuffer(next);
+        } catch (e) {
+          console.error(e);
+          const msg = String((e && e.message) || e || '');
+          if (msg.includes('no longer usable') || msg.includes('is not, or is no longer, usable')) {
+            resetPreviewPipeline('preview pipeline recovered');
+          }
+        }
+      }
+
+      resetPreviewPipeline('preview init');
 
       function setStatus(s) { statusEl.textContent = s; }
+
+      function allowedFingerprint() {
+        return Array.from(viewers.entries())
+          .filter(([, v]) => !!v.allowed)
+          .map(([pub]) => pub)
+          .sort()
+          .join('|');
+      }
+      let lastViewerFingerprint = '';
+
+      async function notifyBroadcastersRotate() {
+        for (const bpub of broadcasters) {
+          try {
+            const dm = await nip17WrapJson(adminSk, bpub, {
+              type: 'rotate_key',
+              streamId,
+              reason: 'viewer_list_changed',
+              ts: Math.floor(Date.now() / 1000),
+            });
+            publish(dm);
+          } catch (e) {
+            console.warn('rotate notify failed', e);
+          }
+        }
+      }
+
+      async function maybeRotateOnViewerChange() {
+        const fp = allowedFingerprint();
+        if (fp === lastViewerFingerprint) return;
+        lastViewerFingerprint = fp;
+        await notifyBroadcastersRotate();
+      }
+
+      function getLatestFrame() {
+        let best = null;
+        for (const [frameId, rec] of adminFrameKeys.entries()) {
+          if (!best || frameId > best.frameId) best = { frameId, rec };
+        }
+        return best;
+      }
+
+      async function sendLatestToViewer(viewerPub, { forceKey = false } = {}) {
+        const latest = getLatestFrame();
+        if (!latest) return;
+        const { frameId, rec } = latest;
+        const isPlain = !!rec.plain;
+        const includeKey = !isPlain && (forceKey || lastSentKeyIdByViewer.get(viewerPub) !== rec.keyId);
+        const dm = await nip17WrapJson(adminSk, viewerPub, {
+          type: 'viewerkey',
+          streamId,
+          frameId,
+          x: rec.blobHash,
+          ...(isPlain ? { key_id: rec.keyId, enc: 'none', alg: 'none' } : (includeKey ? { k: b64encode(rec.keyBytes), key_id: rec.keyId } : { key_id: rec.keyId })),
+          m: rec.mime,
+          alg: isPlain ? 'none' : 'aes-gcm',
+          v: 1,
+        });
+        lastSentKeyIdByViewer.set(viewerPub, rec.keyId);
+        publish(dm);
+      }
 
       function renderViewers() {
         viewersEl.innerHTML = '';
         const entries = Array.from(viewers.entries())
           .sort((a,b) => (b[1].lastSeen||0)-(a[1].lastSeen||0));
+        const allowedCount = entries.filter(([,v]) => !!v.allowed).length;
+        allowedCountEl.textContent = String(allowedCount);
 
         for (const [pub, v] of entries) {
           const row = document.createElement('div');
           row.className = 'viewer';
 
           const left = document.createElement('div');
-          const extra = v.role ? ` (${v.role})` : '';
-          const joined = v.joined ? 'joined' : 'not joined';
-          const hasKp = v.kp ? 'kp' : 'no-kp';
-          left.innerHTML = `<div><code>${v.npub}</code>${extra}</div><div class="small">${joined} · ${hasKp} · last: ${new Date((v.lastSeen||0)*1000).toLocaleTimeString()}</div>`;
+          const shortNpub = `${v.npub.slice(0, 14)}…${v.npub.slice(-6)}`;
+          left.innerHTML = `<div><code>${shortNpub}</code></div><div class="small">last: ${new Date((v.lastSeen||0)*1000).toLocaleTimeString()}</div>`;
 
           const right = document.createElement('div');
           right.className = 'row';
@@ -131,10 +282,13 @@
             v.allowed = cb.checked;
             v.lastSeen = Math.floor(Date.now()/1000);
             viewers.set(pub, v);
-            renderViewers();
-            if (v.allowed && !v.joined) {
-              await tryWelcome(pub);
+            if (!v.allowed) {
+              lastSentKeyIdByViewer.delete(pub);
+            } else {
+              // New allow should immediately deliver latest decrypt metadata/key.
+              await sendLatestToViewer(pub, { forceKey: true });
             }
+            await maybeRotateOnViewerChange();
           };
 
           right.appendChild(document.createTextNode('allow '));
@@ -146,9 +300,11 @@
         }
       }
 
-      document.querySelector('#clear').onclick = () => {
+      document.querySelector('#clear').onclick = async () => {
         viewers.clear();
+        lastSentKeyIdByViewer.clear();
         renderViewers();
+        await maybeRotateOnViewerChange();
       };
 
       async function dm(toPub, payloadObj) {
@@ -200,8 +356,9 @@
           limit: 200,
         }
       ], (ev) => {
-        const d = ev.tags.find(t => t[0] === 'd');
-        if (!d || d[1] !== streamId) return;
+        const dTag = ev.tags.find(t => t[0] === 'd');
+        if (!dTag || dTag[1] !== streamId) return;
+
         const pub = ev.pubkey;
 
         let kp = null;
@@ -224,39 +381,106 @@
         renderViewers();
       });
 
-      // Subscribe to frame announcements + decrypt for preview using MLS exporter
+      // Subscribe to broadcaster→admin key DMs (NIP-17 gift-wrap kind 1059)
       sub([
-        { kinds: [1], '#t': [TAG_DEMO], '#d': [streamId], limit: 100 }
+        {
+          kinds: [1059],
+          '#p': [adminPub],
+          limit: 500,
+        }
       ], async (ev) => {
         try {
-          const frameIdTag = ev.tags.find(t => t[0]==='i');
-          const blobTag = ev.tags.find(t => t[0]==='x');
-          const mimeTag = ev.tags.find(t => t[0]==='m');
-          if (!frameIdTag || !blobTag) return;
-          const frameId = Number(frameIdTag[1]);
-          const blobHash = blobTag[1];
-          const mime = (mimeTag && mimeTag[1]) || 'image/webp';
-          announced.set(frameId, { blobHash, mime });
+          const { inner, msg } = nip17UnwrapJson(adminSk, ev);
+          if (!msg || msg.streamId !== streamId) return;
 
-          if (!exporterSecretB64) refreshExporterSecret();
-          if (!exporterSecretB64) return;
+          if (msg.type === 'access_req') {
+            const pub = inner.pubkey;
+            if (!viewers.has(pub)) {
+              viewers.set(pub, { allowed: false, lastSeen: ev.created_at, npub: npubFromPubkey(pub) });
+            } else {
+              const v = viewers.get(pub);
+              v.lastSeen = ev.created_at;
+              viewers.set(pub, v);
+            }
+            renderViewers();
+            return;
+          }
 
-          const payload = await blobFetch(blobHash);
-          const iv = payload.slice(0, 12);
-          const ct = payload.slice(12);
-          const aad = await sha256Bytes(utf8Bytes(`${streamId}:${frameId}`));
-          const key = await deriveChunkKey(exporterSecretB64, streamId, frameId);
-          const pt = await aesGcmDecrypt(key, iv, ct, { aadBytes: aad });
-          const blob = new Blob([pt], { type: mime });
-          previewEl.src = URL.createObjectURL(blob);
-          setStatus(`preview frame ${frameId} (MLS epoch=${mlsAdmin.group_epoch()} ${mlsKind})`);
+          if (msg.type !== 'adminkey') return;
+
+          broadcasters.add(inner.pubkey);
+
+          const frameId = Number(msg.frameId);
+          const blobHash = msg.x;
+          const isPlain = msg.enc === 'none' || msg.alg === 'none';
+          const keyBytes = isPlain ? null : b64decode(msg.k);
+          const mime = msg.m || 'image/webp';
+          const keyId = msg.key_id || (isPlain ? 'plain' : 'default');
+
+          adminFrameKeys.set(frameId, { keyBytes, blobHash, mime, keyId, plain: isPlain });
+
+          // Forward to allowed viewers immediately; include key only on key change per viewer.
+          for (const [viewerPub, v] of viewers.entries()) {
+            if (!v.allowed) continue;
+            const includeKey = !isPlain && lastSentKeyIdByViewer.get(viewerPub) !== keyId;
+            const dm = await nip17WrapJson(adminSk, viewerPub, {
+              type: 'viewerkey',
+              streamId,
+              frameId,
+              x: blobHash,
+              ...(isPlain ? { key_id: keyId, enc: 'none', alg: 'none' } : (includeKey ? { k: msg.k, key_id: keyId } : { key_id: keyId })),
+              m: mime,
+              alg: isPlain ? 'none' : (msg.alg || 'aes-gcm'),
+              v: 1,
+            });
+            lastSentKeyIdByViewer.set(viewerPub, keyId);
+            publish(dm); // fire-and-forget for latency
+          }
+
+          // Live preview (non-blocking)
+          tryRenderPreview(frameId);
+
+          lastFrameEl.textContent = String(frameId);
+          lastKeyEl.textContent = keyId || '—';
+          const src = npubFromPubkey(inner.pubkey);
+          lastSourceEl.textContent = `${src.slice(0,14)}…${src.slice(-6)}`;
+          setStatus(`receiving keys`);
         } catch (e) {
           // epoch mismatch or not joined broadcaster yet
         }
       });
 
-      refreshExporterSecret();
-      setStatus(`ready (MLS=${mlsKind} epoch=${mlsAdmin.group_epoch()})`);
+      async function tryRenderPreview(frameId) {
+        const rec = adminFrameKeys.get(frameId);
+        if (!rec) return;
+        const payload = await blobFetch(rec.blobHash);
+        const pt = rec.plain
+          ? payload
+          : await (async () => {
+              const iv = payload.slice(0, 12);
+              const ct = payload.slice(12);
+              const aad = utf8Bytes(`${streamId}:${frameId}`);
+              return aesGcmDecrypt(rec.keyBytes, iv, ct, { aadBytes: aad });
+            })();
+
+        if ((rec.mime || '').startsWith('video/')) {
+          previewEl.style.display = 'none';
+          previewVideoEl.style.display = 'block';
+          enqueuePreview(pt);
+          if (previewVideoEl.paused) {
+            try { await previewVideoEl.play(); } catch {}
+          }
+          return;
+        }
+
+        previewVideoEl.style.display = 'none';
+        previewEl.style.display = 'block';
+        const blob = new Blob([pt], { type: rec.mime });
+        previewEl.src = URL.createObjectURL(blob);
+      }
+
+      lastViewerFingerprint = allowedFingerprint();
+      setStatus('ready');
     </script>
   </body>
 </html>

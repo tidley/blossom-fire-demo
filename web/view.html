@@ -5,15 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>View</title>
     <style>
-      body { font-family: system-ui, sans-serif; margin: 16px; }
-      .box { padding: 12px; border: 1px solid #ddd; border-radius: 8px; }
-      code { background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }
-      img { width: 100%; max-width: 720px; border: 1px solid #ddd; border-radius: 8px; margin-top: 12px; }
-      .small { color: #666; font-size: 12px; }
+      :root { color-scheme: dark; }
+      body { font-family: system-ui, sans-serif; margin: 16px; background: #0b0e14; color: #e6edf3; }
+      .box { padding: 12px; border: 1px solid #2f3540; border-radius: 8px; background: #111826; }
+      .row { display: flex; gap: 16px; flex-wrap: wrap; }
+      .grid { display: grid; grid-template-columns: 1fr 420px; gap: 16px; align-items: start; }
+      @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+      code { background: #1a2233; color: #d2e0ff; padding: 2px 4px; border-radius: 4px; }
+      a { color: #7ab8ff; }
+      .small { color: #9aa7bd; font-size: 12px; }
+      button, input { font-size: 16px; background: #1a2233; color: #e6edf3; border: 1px solid #3a4354; border-radius: 6px; }
+      button { padding: 6px 10px; cursor: pointer; }
+      video, canvas, img { max-width: 100%; border: 1px solid #2f3540; border-radius: 8px; background: #000; }
+      .viewer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid #253043; }
+          .titlebar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+      .stream-jump { display:flex; align-items:center; gap:8px; }
+      .stream-jump input { width: 140px; padding: 6px 8px; }
+      .stream-jump button { padding: 6px 10px; }
     </style>
   </head>
   <body>
+    <div class="titlebar">
     <h2>Viewer</h2>
+    <div class="stream-jump">
+      <label for="streamJump">Stream ID</label>
+      <input id="streamJump" type="text" value="" placeholder="auto" />
+      <button id="goStream" type="button">Go</button>
+    </div>
+  </div>
     <div class="box">
       <div>Stream: <code id="stream"></code></div>
       <div>Your npub: <code id="npub"></code></div>
@@ -24,7 +43,7 @@
     <img id="img" />
 
     <script type="module">
-      import { TAG_REQ, TAG_DEMO } from './config.js';
+      import { TAG_REQ, TAG_DEMO, ADMIN_SK_HEX } from './config.js';
       import { blobFetch } from './blob.js';
       import { aesGcmDecrypt, b64decode, utf8Bytes, sha256Bytes, b64encode } from './crypto.js';
       import { deriveChunkKey } from './deriveChunkKey.js';
@@ -35,11 +54,30 @@
         makeSignedEventUnsigned,
         publish,
         sub,
-        nip44Decrypt,
+        nip17UnwrapJson,
+        nip17WrapJson,
+        skFromHex,
+        pubkeyFromSk,
       } from './util.js';
 
-      const streamId = getStreamId();
+      const streamId = (getStreamId() || 'demo1').trim() || 'demo1';
       document.querySelector('#stream').textContent = streamId;
+
+      const streamJumpEl = document.querySelector('#streamJump');
+      const goStreamEl = document.querySelector('#goStream');
+      if (streamJumpEl && goStreamEl) {
+        streamJumpEl.value = streamId;
+        const go = () => {
+          const next = (streamJumpEl.value || '').trim();
+          if (!next) return;
+          const u = new URL(location.href);
+          u.searchParams.set('stream', next);
+          location.href = u.toString();
+        };
+        goStreamEl.onclick = go;
+        streamJumpEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      }
+
 
       const viewer = getOrCreateViewerKeypair('demo.viewer.sk');
       document.querySelector('#npub').textContent = viewer.npub;
@@ -47,43 +85,33 @@
       const statusEl = document.querySelector('#status');
       const imgEl = document.querySelector('#img');
 
-      // MLS state
-      const { member: mls, kind: mlsKind, persist: persistMls } = await createMember(
-        `${streamId}:viewer:${viewer.pk}`,
-        `mls.member.viewer.${streamId}.${viewer.pk}`
-      );
-      let exporterSecretB64 = null;
-
-      // frameId -> { blobHash, mime }
+      // frameId -> { keyB64, keyId, blobHash, mime, enc }
+      const keys = new Map();
+      // frameId -> blobHash (announced)
       const announced = new Map();
-      // legacy frameId -> keyB64 (fallback/dummy)
-      const legacyKeys = new Map();
+      // key_id -> keyB64
+      const keysById = new Map();
+      let currentKeyB64 = null;
 
       function setStatus(s) { statusEl.textContent = s; }
 
-      async function refreshExporterSecret() {
-        try {
-          const ctxB64 = b64encode(utf8Bytes(streamId));
-          exporterSecretB64 = mls.export_secret('blossom-fire-demo', ctxB64, 32);
-          persistMls();
-          setStatus(`MLS ready (${mlsKind}) epoch=${mls.group_epoch()}`);
-        } catch {
-          exporterSecretB64 = null;
-        }
-      }
-
-      // Auto-request access (public join request)
+      // Auto-request access (kind1 + NIP-17 fallback)
+      const req = makeSignedEventUnsigned(1, viewer.sk, {
+        content: 'request',
+        tags: [ ['t', TAG_REQ], ['d', streamId] ]
+      });
+      await publish(req);
       try {
-        const kp = mls.create_key_package();
-        const req = makeSignedEventUnsigned(1, viewer.sk, {
-          content: JSON.stringify({ t: 'mls_join', role: 'viewer', kp, v: 1 }),
-          tags: [ ['t', TAG_REQ], ['d', streamId] ]
+        const adminPub = pubkeyFromSk(skFromHex(ADMIN_SK_HEX));
+        const dm = await nip17WrapJson(viewer.sk, adminPub, {
+          type: 'access_req',
+          streamId,
+          role: 'viewer',
+          v: 1,
         });
-        await publish(req);
-      } catch (e) {
-        console.warn('mls join request failed', e);
-      }
-      setStatus('requested access; waiting for MLS welcome…');
+        await publish(dm);
+      } catch {}
+      setStatus('requested access; waiting for keys…');
 
       // Subscribe to frame announcements
       sub([
@@ -106,28 +134,31 @@
         }
       });
 
-      // Subscribe to DMs addressed to this viewer (MLS + legacy keys)
+      // Subscribe to DMs addressed to this viewer (NIP-17 keys)
       sub([
-        { kinds: [4], '#p': [viewer.pk], '#d': [streamId], limit: 200 }
+        { kinds: [1059], '#p': [viewer.pk], limit: 500 }
       ], async (ev) => {
         try {
-          const plaintext = nip44Decrypt(viewer.sk, ev.pubkey, ev.content);
-          const msg = JSON.parse(plaintext);
+          const { msg } = nip17UnwrapJson(viewer.sk, ev);
+          if (!msg || msg.type !== 'viewerkey') return;
           if (msg.streamId !== streamId) return;
 
-          if (msg.type === 'mls_welcome') {
-            mls.process_welcome(msg.welcome, msg.commit);
-            await refreshExporterSecret();
-          } else if (msg.type === 'mls_commit') {
-            mls.process_commit(msg.commit);
-            await refreshExporterSecret();
-          } else if (msg.k && msg.frameId != null) {
-            // legacy per-frame key
-            legacyKeys.set(Number(msg.frameId), msg.k);
-            await tryRender(Number(msg.frameId));
+          const keyId = msg.key_id || 'default';
+          if (msg.k) {
+            currentKeyB64 = msg.k;
+            keysById.set(keyId, msg.k);
           }
-        } catch {
-          // ignore
+          keys.set(Number(msg.frameId), {
+            keyId,
+            keyB64: msg.k || keysById.get(keyId) || currentKeyB64,
+            blobHash: msg.x,
+            mime: msg.m || 'image/webp',
+            enc: msg.enc || null,
+          });
+          setStatus(`allowed; got key for frame ${msg.frameId}`);
+          await tryRender(Number(msg.frameId));
+        } catch (e) {
+          // likely not decryptable
         }
       });
 
@@ -135,26 +166,49 @@
 
       async function tryRender(frameId) {
         const a = announced.get(frameId);
-        if (!a) return;
+        if (!k) return;
 
-        const payload = await blobFetch(a.blobHash);
-        const iv = payload.slice(0, 12);
-        const ct = payload.slice(12);
-        const aad = await sha256Bytes(utf8Bytes(`${streamId}:${frameId}`));
+        const blobHash = k.blobHash || a?.blobHash;
+        const mime = k.mime || a?.mime || 'image/webp';
+        if (!blobHash) return;
 
-        let keyBytes = null;
-        if (exporterSecretB64) {
-          keyBytes = await deriveChunkKey(exporterSecretB64, streamId, frameId);
-        } else if (legacyKeys.has(frameId)) {
-          keyBytes = b64decode(legacyKeys.get(frameId));
-        } else {
-          return;
-        }
+        const payload = await blobFetch(blobHash);
+        const plain = (k?.enc === 'none');
+        const resolvedKeyB64 = k?.keyB64 || (k?.keyId ? keysById.get(k.keyId) : null) || currentKeyB64;
 
         try {
-          const pt = await aesGcmDecrypt(keyBytes, iv, ct, { aadBytes: aad });
-          const blob = new Blob([pt], { type: a.mime });
-          imgEl.src = URL.createObjectURL(blob);
+          const bytes = plain
+            ? payload
+            : await (async () => {
+                if (!resolvedKeyB64) throw new Error('missing key');
+                const iv = payload.slice(0, 12);
+                const ct = payload.slice(12);
+                const keyBytes = b64decode(resolvedKeyB64);
+
+                // Be tolerant to sender-side AAD format drift across builds.
+                const aadCandidates = [
+                  utf8Bytes(`${streamId}:${frameId}`),
+                  utf8Bytes(String(frameId)),
+                  new Uint8Array(0),
+                ];
+                let lastErr;
+                for (const aad of aadCandidates) {
+                  try {
+                    return await aesGcmDecrypt(keyBytes, iv, ct, { aadBytes: aad });
+                  } catch (e) {
+                    lastErr = e;
+                  }
+                }
+                throw lastErr || new Error('decrypt failed');
+              })();
+
+          const blob = new Blob([bytes], { type: mime });
+          const prev = imgEl.dataset.objurl;
+          const next = URL.createObjectURL(blob);
+          imgEl.src = next;
+          imgEl.dataset.objurl = next;
+          if (prev) { try { URL.revokeObjectURL(prev); } catch {} }
+          setStatus(`rendered frame ${frameId}`);
         } catch (e) {
           setStatus('have blob but not allowed (or wrong epoch)');
         }

@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Blossom Fire — Media Freedom Infrastructure</title>
+  <style>
+    :root {
+      --bg: #0a0a0f;
+      --bg2: #12121a;
+      --text: #e8e8f0;
+      --dim: #9595b0;
+      --accent: #f7931a;
+      --accent2: #7c5cff;
+      --green: #00d4aa;
+      --red: #ff4466;
+      --blue: #4488ff;
+      --card: rgba(255, 255, 255, 0.04);
+      --border: rgba(255, 255, 255, 0.08);
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      padding: 56px 76px;
+      opacity: 0;
+      transform: translateX(48px);
+      transition: all 0.42s cubic-bezier(0.4, 0, 0.2, 1);
+      pointer-events: none;
+      overflow-y: auto;
+    }
+
+    .slide.active { opacity: 1; transform: translateX(0); pointer-events: auto; }
+    .slide.prev { opacity: 0; transform: translateX(-48px); }
+
+    h1 { font-size: 3.3rem; line-height: 1.04; letter-spacing: -0.03em; margin-bottom: 14px; }
+    h2 { font-size: 2.2rem; line-height: 1.12; letter-spacing: -0.02em; margin-bottom: 20px; }
+    h3 { font-size: 1.05rem; margin-bottom: 10px; color: var(--accent); }
+
+    p, li, td { color: var(--dim); line-height: 1.55; }
+    strong { color: var(--text); }
+
+    .subtitle { font-size: 1.18rem; margin-bottom: 10px; color: var(--dim); }
+    .content-left { align-items: flex-start; text-align: left; }
+    .center { text-align: center; }
+
+    .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 18px; width: 100%; max-width: 1120px; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; width: 100%; max-width: 1120px; }
+    .three-col { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; width: 100%; max-width: 1120px; }
+
+    .card, .stat-box, .diagram-box, pre { background: var(--card); border: 1px solid var(--border); border-radius: 16px; }
+    .card { padding: 22px; }
+    .stat-box { padding: 24px 18px; text-align: center; }
+    .diagram-box, pre {
+      padding: 20px 22px;
+      width: 100%;
+      max-width: 960px;
+      overflow-x: auto;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      white-space: pre-wrap;
+      color: #cfd8ea;
+    }
+
+    .big { font-size: 2.2rem; color: var(--text); line-height: 1.08; }
+    .muted { color: var(--dim); }
+
+    .tag {
+      display: inline-block;
+      padding: 5px 12px;
+      border-radius: 999px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .tag-accent { background: rgba(247,147,26,0.14); color: var(--accent); }
+    .tag-purple { background: rgba(124,92,255,0.14); color: var(--accent2); }
+    .tag-green { background: rgba(0,212,170,0.14); color: var(--green); }
+    .tag-blue { background: rgba(68,136,255,0.14); color: var(--blue); }
+    .tag-red { background: rgba(255,68,102,0.14); color: var(--red); }
+
+    .pill-row { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+
+    ul { list-style: none; }
+    li { padding: 5px 0; font-size: 1.04rem; }
+    li::before { content: "→ "; color: var(--accent); font-weight: 700; }
+
+    .timeline { display: grid; gap: 14px; width: 100%; max-width: 1040px; }
+    .step { border-left: 3px solid #33425a; padding: 8px 0 8px 16px; }
+    .step b { color: var(--text); }
+
+    table { width: 100%; border-collapse: collapse; max-width: 1080px; font-size: 0.95rem; }
+    th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    th { color: var(--accent); border-bottom-width: 2px; }
+
+    #progress {
+      position: fixed;
+      top: 0;
+      left: 0;
+      height: 3px;
+      width: 0;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      z-index: 100;
+      transition: width 0.25s ease;
+    }
+
+    #nav {
+      position: fixed;
+      right: 20px;
+      bottom: 16px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      z-index: 100;
+      color: var(--dim);
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+    }
+
+    #nav button {
+      background: var(--card);
+      color: var(--dim);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+
+    .speaker-note {
+      display: none;
+      position: fixed;
+      left: 20px;
+      bottom: 48px;
+      max-width: 480px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      background: rgba(247,147,26,0.08);
+      border: 1px solid rgba(247,147,26,0.2);
+      color: var(--accent);
+      font-size: 0.72rem;
+      font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      z-index: 100;
+    }
+
+    body.show-notes .speaker-note { display: block; }
+
+    @media (max-width: 860px) {
+      .slide { padding: 26px 18px; }
+      h1 { font-size: 2.12rem; }
+      h2 { font-size: 1.52rem; }
+      .two-col, .three-col { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div id="progress"></div>
+
+  <section class="slide active center" data-time="0:35">
+    <div class="pill-row" style="justify-content:center; margin-bottom: 16px;">
+      <span class="tag tag-accent">Blossom Fire</span>
+      <span class="tag tag-purple">Nostr + Blob</span>
+      <span class="tag tag-green">Sovereign Media</span>
+    </div>
+    <h1>Media freedom without platform permission</h1>
+    <p class="subtitle">Community-controlled live media for censorship pressure and fragile connectivity.</p>
+    <div class="diagram-box" style="display:inline-block; text-align:left; max-width: 760px; margin-top: 10px;">
+Control plane: Nostr identity + authorization
+Data plane: Blob chunk transport
+Result: operator-owned trust boundaries
+    </div>
+    <div class="speaker-note">Thesis: most “decentralized” media systems still centralize control; Blossom Fire separates control and transport to preserve operator sovereignty.</div>
+  </section>
+
+  <section class="slide content-left" data-time="1:00">
+    <h2>Agenda</h2>
+    <div class="card-grid">
+      <div class="card"><h3>1 — Stakes</h3><p>Why current decentralized claims often break under scrutiny.</p></div>
+      <div class="card"><h3>2 — Design</h3><p>The control/data split and protocol flow.</p></div>
+      <div class="card"><h3>3 — Reliability</h3><p>Why this model survives rough network conditions.</p></div>
+      <div class="card"><h3>4 — Positioning</h3><p>Comparison with Hivetalk/WebRTC-style systems.</p></div>
+      <div class="card"><h3>5 — Limits</h3><p>What still needs hardening.</p></div>
+      <div class="card"><h3>6 — Direction</h3><p>Roadmap for stronger sovereignty + UX.</p></div>
+    </div>
+  </section>
+
+  <section class="slide content-left" data-time="1:00">
+    <h2>The power imbalance we are solving</h2>
+    <div class="two-col">
+      <div class="card">
+        <h3>What “decentralized” often still means</h3>
+        <ul>
+          <li>centralized signaling and hidden control services</li>
+          <li>opaque account-based permission systems</li>
+          <li>platform veto power over identity and speech distribution</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>What communities actually need</h3>
+        <ul>
+          <li>portable identity and explicit authorization flow</li>
+          <li>replaceable infrastructure without losing identity or audience graph</li>
+          <li>graceful behavior under poor connectivity</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide content-left" data-time="1:05">
+    <h2>Blossom Fire architecture</h2>
+    <div class="three-col">
+      <div class="card">
+        <h3>Identity plane</h3>
+        <p>Nostr keys anchor who can request, authorize, and deliver stream control messages.</p>
+      </div>
+      <div class="card">
+        <h3>Control plane</h3>
+        <p>Nostr events + NIP-17 messages coordinate access, key metadata, and stream state.</p>
+      </div>
+      <div class="card">
+        <h3>Data plane</h3>
+        <p>Chunk payloads live in blob storage and are fetched independently of relay timing.</p>
+      </div>
+    </div>
+    <div class="diagram-box" style="margin-top:14px;">
+[Broadcaster] --(chunk announce)--> [Relays]
+[Broadcaster] --(adminkey)-------> [Admin]
+[Admin] ------(viewerkey)-------> [Viewer]
+[Viewer] -----(blob fetch)------> [Blob Store]
+    </div>
+  </section>
+
+  <section class="slide content-left" data-time="1:10">
+    <h2>Protocol flow (operational view)</h2>
+    <div class="timeline">
+      <div class="step"><b>Step 1:</b> Viewer requests access (<code>access_req</code>).</div>
+      <div class="step"><b>Step 2:</b> Broadcaster emits chunk metadata + blob reference.</div>
+      <div class="step"><b>Step 3:</b> Broadcaster shares admin-facing key metadata (<code>adminkey</code>).</div>
+      <div class="step"><b>Step 4:</b> Admin forwards viewer-specific authorization (<code>viewerkey</code>).</div>
+      <div class="step"><b>Step 5:</b> Viewer fetches blob, validates context, decodes, plays.</div>
+      <div class="step"><b>Step 6:</b> Playback path chooses MSE or compatibility mode based on runtime stability.</div>
+    </div>
+  </section>
+
+  <section class="slide content-left" data-time="1:00">
+    <h2>Why this supports community sovereignty</h2>
+    <div class="card-grid">
+      <div class="card"><h3>Community-owned boundaries</h3><p>Relay, blob service, and frontend can be run by communities, collectives, and local organizers.</p></div>
+      <div class="card"><h3>Portable identity</h3><p>Nostr keys, not platform accounts, define identity trust roots.</p></div>
+      <div class="card"><h3>Transparent governance hooks</h3><p>Authorization is explicit message flow, enabling inspectable and contestable governance rules.</p></div>
+      <div class="card"><h3>Composability</h3><p>Control semantics survive infrastructure swaps.</p></div>
+    </div>
+  </section>
+
+  <section class="slide content-left" data-time="1:00">
+    <h2>Built for hostile and unreliable environments</h2>
+    <div class="two-col">
+      <div class="card">
+        <h3>Reliability mechanisms</h3>
+        <ul>
+          <li>chunk-oriented delivery over fetchable blobs</li>
+          <li>retries for transient missing chunk windows</li>
+          <li>out-of-order control convergence</li>
+          <li>degradation under pressure instead of hard-stream collapse</li>
+        </ul>
+      </div>
+      <div class="stat-box">
+        <div class="tag tag-blue">Design preference</div>
+        <p class="big" style="margin-top: 14px;">eventual continuity</p>
+        <p style="margin-top: 10px;">over brittle realtime perfection</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide content-left" data-time="1:15">
+    <h2>Comparison matrix</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Dimension</th>
+          <th>Blossom Fire</th>
+          <th>Hivetalk-style</th>
+          <th>WebRTC + centralized SFU</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Identity portability</td><td><strong>High</strong> (Nostr-native)</td><td>Medium</td><td>Low–Medium</td></tr>
+        <tr><td>Self-host sovereignty</td><td><strong>High</strong></td><td>Medium</td><td>Medium</td></tr>
+        <tr><td>Poor-network tolerance</td><td><strong>High</strong> (chunk + retry)</td><td>Medium</td><td>Medium</td></tr>
+        <tr><td>Realtime smoothness</td><td>Medium (improving)</td><td><strong>High</strong></td><td><strong>High</strong></td></tr>
+        <tr><td>Hidden central chokepoints</td><td><strong>Low</strong></td><td>Medium</td><td>Medium–High</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section class="slide content-left" data-time="0:55">
+    <h2>Current reality: what is ready vs fragile</h2>
+    <div class="two-col">
+      <div class="card">
+        <h3>What works now</h3>
+        <ul>
+          <li>end-to-end broadcaster → admin → viewer flow</li>
+          <li>viewer authorization gating</li>
+          <li>recovery and fallback logic for browser instability</li>
+          <li>operationally usable prototype</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Known constraints</h3>
+        <ul>
+          <li>Chrome MSE stability still uneven in some paths</li>
+          <li>compatibility mode trades smoothness for resilience</li>
+          <li>observability can be deeper (drift / decode telemetry)</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide content-left" data-time="0:55">
+    <h2>Roadmap for movement-grade resilience</h2>
+    <div class="card-grid">
+      <div class="card"><h3>1. Browser pipeline hardening</h3><p>fMP4/CMAF path and stricter append semantics.</p></div>
+      <div class="card"><h3>2. Adaptive policies</h3><p>Dynamic chunk sizing and bitrate profiles for volatility.</p></div>
+      <div class="card"><h3>3. Stronger key lifecycle</h3><p>Clear rotation, revocation, and viewer capability boundaries.</p></div>
+      <div class="card"><h3>4. Governance controls</h3><p>Policy defaults for consent, moderation, and emergency continuity under attack.</p></div>
+    </div>
+  </section>
+
+  <section class="slide center" data-time="0:35">
+    <div class="pill-row" style="justify-content:center; margin-bottom: 18px;">
+      <span class="tag tag-green">Takeaway</span>
+    </div>
+    <h1>Blossom Fire proves a political point</h1>
+    <p class="subtitle">Communities can publish and coordinate live media without asking centralized platforms for continued permission.</p>
+    <div class="diagram-box" style="display:inline-block; text-align:left; max-width: 760px; margin-top: 10px;">
+Not decentralization theater.
+Concrete trust boundaries.
+Community-owned control.
+    </div>
+    <div class="speaker-note">Close with the thesis distilled into one repeatable line.</div>
+  </section>
+
+  <div id="nav">
+    <button onclick="prevSlide()">← Prev</button>
+    <span id="counter">1 / 11</span>
+    <button onclick="nextSlide()">Next →</button>
+    <button onclick="toggleNotes()">📝</button>
+  </div>
+
+  <script>
+    const slides = document.querySelectorAll('.slide');
+    let current = 0;
+
+    function showSlide(index) {
+      slides.forEach((slide, i) => {
+        slide.classList.remove('active', 'prev');
+        if (i === index) slide.classList.add('active');
+        else if (i < index) slide.classList.add('prev');
+      });
+
+      current = index;
+      document.getElementById('counter').textContent = `${index + 1} / ${slides.length}`;
+      document.getElementById('progress').style.width = `${((index + 1) / slides.length) * 100}%`;
+    }
+
+    function nextSlide() { if (current < slides.length - 1) showSlide(current + 1); }
+    function prevSlide() { if (current > 0) showSlide(current - 1); }
+    function toggleNotes() { document.body.classList.toggle('show-notes'); }
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowRight' || event.key === ' ' || event.key === 'Enter') {
+        event.preventDefault();
+        nextSlide();
+      }
+      if (event.key === 'ArrowLeft' || event.key === 'Backspace') {
+        event.preventDefault();
+        prevSlide();
+      }
+      if (event.key.toLowerCase() === 'n') toggleNotes();
+      if (event.key.toLowerCase() === 'f') document.documentElement.requestFullscreen?.();
+    });
+
+    let touchStartX = 0;
+    document.addEventListener('touchstart', (event) => { touchStartX = event.touches[0].clientX; });
+    document.addEventListener('touchend', (event) => {
+      const diff = event.changedTouches[0].clientX - touchStartX;
+      if (Math.abs(diff) > 50) diff > 0 ? prevSlide() : nextSlide();
+    });
+
+    showSlide(0);
+  </script>
+</body>
+</html>

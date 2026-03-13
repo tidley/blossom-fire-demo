@@ -1,0 +1,144 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Viewer LL-HLS (test)</title>
+    <style>
+      :root { color-scheme: dark; }
+      body { font-family: system-ui, sans-serif; margin: 16px; background: #0b0e14; color: #e6edf3; }
+      .box { padding: 12px; border: 1px solid #2f3540; border-radius: 8px; background: #111826; margin-bottom: 12px; }
+      input, button { font-size: 15px; background: #1a2233; color: #e6edf3; border: 1px solid #3a4354; border-radius: 6px; padding: 6px 8px; }
+      .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+      code { background: #1a2233; padding: 2px 4px; border-radius: 4px; }
+      video { width: 100%; max-width: 900px; border: 1px solid #2f3540; border-radius: 8px; background: #000; }
+      a { color: #7ab8ff; }
+          .titlebar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+      .stream-jump { display:flex; align-items:center; gap:8px; }
+      .stream-jump input { width: 140px; padding: 6px 8px; }
+      .stream-jump button { padding: 6px 10px; }
+    </style>
+  </head>
+  <body>
+    <div class="titlebar">
+    <h2>Viewer LL-HLS (side-by-side test)</h2>
+    <div class="stream-jump">
+      <label for="streamJump">Stream ID</label>
+      <input id="streamJump" type="text" value="" placeholder="auto" />
+      <button id="goStream" type="button">Go</button>
+    </div>
+  </div>
+    <div class="box">
+      <div>Stream: <code id="stream"></code></div>
+      <div>Status: <span id="status">idle</span></div>
+      <div>Buffer: <span id="bufferSec">0.0s</span></div>
+      <div class="row" style="margin-top:8px;">
+        <label>Playlist URL</label>
+        <input id="playlist" style="min-width:420px;" />
+        <button id="play">Play LL-HLS</button>
+      </div>
+      <div style="margin-top:8px;">
+        Compare with current path: <a id="legacyLink" href="#">view-video.html</a>
+      </div>
+    </div>
+
+    <video id="v" controls autoplay playsinline></video>
+
+    <script type="module">
+      import { getStreamId } from './util.js';
+
+      const streamId = (getStreamId() || 'demo1').trim() || 'demo1';
+      const streamJumpEl = document.querySelector('#streamJump');
+      const goStreamEl = document.querySelector('#goStream');
+      if (streamJumpEl && goStreamEl) {
+        streamJumpEl.value = streamId;
+        const go = () => {
+          const next = (streamJumpEl.value || '').trim();
+          if (!next) return;
+          const u = new URL(location.href);
+          u.searchParams.set('stream', next);
+          location.href = u.toString();
+        };
+        goStreamEl.onclick = go;
+        streamJumpEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      }
+      const statusEl = document.getElementById('status');
+      const bufferEl = document.getElementById('bufferSec');
+      const video = document.getElementById('v');
+      const playlistInput = document.getElementById('playlist');
+      const legacyLink = document.getElementById('legacyLink');
+
+      document.getElementById('stream').textContent = streamId;
+      legacyLink.href = `/view-video.html?stream=${encodeURIComponent(streamId)}`;
+
+      // Default path for future LL-HLS backend.
+      playlistInput.value = `${location.origin}/hls/${encodeURIComponent(streamId)}/index.m3u8`;
+
+      function setStatus(s) { statusEl.textContent = s; }
+      function bufferedAheadSec() {
+        try {
+          const b = video.buffered;
+          if (!b || b.length === 0) return 0;
+          const end = b.end(b.length - 1);
+          const cur = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+          return Math.max(0, end - cur);
+        } catch {
+          return 0;
+        }
+      }
+      function updateBufferUi() {
+        bufferEl.textContent = `${bufferedAheadSec().toFixed(1)}s`;
+      }
+
+      async function loadViaNativeOrHlsJs(url) {
+        const canNative = video.canPlayType('application/vnd.apple.mpegurl');
+        if (canNative) {
+          video.src = url;
+          setStatus('using native HLS');
+          try { await video.play(); } catch {}
+          return;
+        }
+
+        // hls.js fallback for browsers without native HLS support
+        const mod = await import('https://esm.sh/hls.js@1.5.17');
+        const Hls = mod.default;
+        if (!Hls.isSupported()) {
+          throw new Error('HLS unsupported in this browser');
+        }
+        const hls = new Hls({
+          lowLatencyMode: true,
+          liveSyncDurationCount: 3,
+          liveMaxLatencyDurationCount: 8,
+          backBufferLength: 30,
+        });
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+          hls.loadSource(url);
+          setStatus('hls.js attached; loading playlist');
+        });
+        hls.on(Hls.Events.MANIFEST_PARSED, async () => {
+          setStatus('manifest parsed; playing');
+          try { await video.play(); } catch {}
+        });
+        hls.on(Hls.Events.ERROR, (_evt, data) => {
+          setStatus(`hls error: ${data?.details || data?.type || 'unknown'}`);
+        });
+      }
+
+      document.getElementById('play').onclick = async () => {
+        const url = playlistInput.value.trim();
+        if (!url) return;
+        try {
+          setStatus('loading…');
+          await loadViaNativeOrHlsJs(url);
+        } catch (e) {
+          setStatus(`error: ${e.message || e}`);
+        }
+      };
+
+      setInterval(updateBufferUi, 500);
+      updateBufferUi();
+      setStatus('ready');
+    </script>
+  </body>
+</html>

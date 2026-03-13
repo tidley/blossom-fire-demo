@@ -1,258 +1,122 @@
-# Blossom Fire Demo (POC)
+# Blossom Fire Demo
 
-This repo is a proof-of-concept for **client-side encrypted media hosting** (Blossom-style blob storage) with **per-npub access control**.
+A sovereign-first live media prototype built on:
 
-### Why it’s called “Blossom Fire”
+- **Nostr** for identity, access control, and coordination
+- **Blossom blob storage** for media chunk transport
+- **Local/self-hostable services** for relay + blob + web app
 
-Because once ciphertext starts spreading across blob hosts, caches, and mirrors, it becomes **hard to “put out”**: even if one provider blocks you or goes down, the content can keep propagating and staying available — while access remains controlled by cryptographic keys.
+This project intentionally separates **control plane** from **data plane**:
 
-It now supports an experimental **MLS (Messaging Layer Security)** group-key flow using **OpenMLS compiled to WASM** (Rust → wasm-bindgen/wasm-pack). Nostr is used as transport:
+- Control (who is allowed, key exchange, stream metadata) travels over Nostr events/DMs.
+- Media payloads travel as chunk blobs.
 
-- **Join requests** are public kind 1 events (tagged `t=blossom-fire-demo-req`).
-- **Welcome/Commit messages** are delivered over encrypted DMs (currently kind 4 with NIP-44 encryption as a lightweight transport wrapper).
-
-If the WASM package is not built/available, the app falls back to a **DummyMlsGroup** that behaves like the old per-frame-key demo.
-
-It implements a "near-live" **encrypted slideshow** first (camera → frames → encrypted blobs), because it’s the simplest way to prove:
-
-- everyone can fetch ciphertext blobs, but
-- only *allowed* `npub`s receive the keys, and
-- you can toggle access on/off live (effective on the next frame).
-
-Once this is proven, the exact same pattern upgrades to **near-live video** (MediaRecorder chunks) with MSE playback.
+That split is the core architectural choice.
 
 ---
 
-## What’s happening (end-to-end)
+## What this project is
 
-### Core crypto pattern (MLS exporter → per-chunk keys)
+Blossom Fire is a practical experiment in resilient, user-operated streaming:
 
-For each frame/chunk `i`:
+- broadcaster publishes chunk announcements + admin key metadata
+- admin authorizes viewers and forwards viewer-specific key metadata
+- viewer fetches blobs and decodes only when authorized
 
-1. Admin maintains an MLS group (OpenMLS).
-2. Broadcaster/viewers join via **Join → Welcome → Commit**.
-3. Each member computes an **exporter secret** from the current MLS epoch.
-4. The per-frame key is derived deterministically:
-   - `K_i = SHA-256(exporter_secret || utf8(streamId + ":" + i))` (32 bytes)
-5. The frame bytes are encrypted with **AES-256-GCM** using `K_i`.
-6. The ciphertext is uploaded to the blob host.
-
-**Important:** blobs are public/guessable by hash, but the content is private without the current MLS epoch secret.
-
-### Fixed-size AAD
-Some WebCrypto implementations are picky about AES-GCM `additionalData` (AAD) length.
-
-This demo uses:
-
-- `AAD_i = SHA-256(utf8(streamId + ":" + frameId))` → **32 bytes**
-
-This binds each ciphertext to its stream+frame index (prevents swapping frames without detection).
-
-### Nostr pieces
-
-We use a single relay (configurable) for:
-
-- **Public events** (frame announcements, access requests)
-- **Private key delivery** via **NIP-44**, transported in **kind 4** DMs.
-
-#### Public frame announcement (kind 1)
-Broadcaster publishes a public event per frame:
-
-- tags:
-  - `t=blossom-fire-demo`
-  - `d=<streamId>`
-  - `i=<frameId>`
-  - `x=<blobHash>`
-  - `m=image/webp`
-
-Anyone can see these and fetch ciphertext, but cannot decrypt without keys.
-
-#### Viewer access request (kind 1)
-Each viewer auto-generates a Nostr keypair in the browser (stored in `localStorage`) and publishes:
-
-- tags:
-  - `t=blossom-fire-demo-req`
-  - `d=<streamId>`
-
-Admin uses this to populate the allowlist UI.
-
-#### MLS Welcome/Commit transport (kind 4 DM, NIP-44 encrypted)
-
-- Viewer/Broadcaster → Admin: posts a public join request containing an MLS `KeyPackage`.
-- Admin → New member: sends an encrypted DM with `{type:"mls_welcome", welcome, commit}`.
-- Admin → Existing members: sends an encrypted DM with `{type:"mls_commit", commit}` so everyone advances to the new epoch.
-
-Encryption/transport is currently **kind 4 DMs** with **NIP-44** (a pragmatic transport wrapper).
-
-Revocation remains "forward-only" at the epoch level: removing members isn’t implemented yet; but after each add/commit, only current members can derive future keys.
+It is designed to keep working when networks are uneven, relays are imperfect, and browsers are inconsistent.
 
 ---
 
-## Components
+## Why this matters for individual sovereignty
 
-- `web/`
-  - `broadcast.html`: camera → encrypt with MLS-derived keys → upload → announce
-  - `admin.html`: MLS group admin; approves join requests; sends Welcome/Commit
-  - `view.html`: join MLS; fetch ciphertext + decrypt via MLS-derived keys
-- `mls-wasm/`: Rust crate compiled to WASM (OpenMLS) used by the web pages
-- `blob/server.js`: minimal blob store used like Blossom (upload bytes → hash; fetch by hash). Includes permissive CORS for the demo.
-- `relay/config.toml`: nostr-rs-relay config (ensure relay accepts writes).
+### 1) You control trust boundaries
+You can run your own relay, blob server, and web front-end. No mandatory centralized signaling service.
 
-### Build the OpenMLS WASM package
+### 2) Identity is portable
+Identity/authorization are key-based and event-based, not tied to one app account database.
 
-This step is optional (the demo will fall back to `DummyMlsGroup`), but required for the real MLS flow.
+### 3) Policy is explicit
+Access is granted through explicit signed messages (`access_req`, `viewerkey`, `adminkey`) rather than hidden backend ACLs.
 
-Prereqs:
+### 4) Data/control decoupling reduces lock-in
+You can replace transport/storage components without redesigning identity and access semantics.
 
-```bash
-rustup target add wasm32-unknown-unknown
-cargo install wasm-pack
-```
-
-Build:
-
-```bash
-cd mls-wasm
-wasm-pack build --release --target web --out-dir ../web/pkg_mls
-```
+### 5) Degrades gracefully
+When strict MSE paths are unreliable (notably some Chrome conditions), compatibility playback keeps streams usable.
 
 ---
 
-## Quickstart (VPS, HTTPS)
+## Why it is good for low-reliability networks
 
-### 1) Choose domains
-Pick 3 hostnames (subdomains) you control and point them at your VPS IP:
+This project is particularly strong when links are unstable, bursty, or high-latency:
 
-- `DEMO_HOST` (serves the web UI) — e.g. `demo.example.com`
-- `BLOSSOM_HOST` (serves encrypted blobs) — e.g. `blossom.example.com`
-- `RELAY_HOST` (serves a Nostr relay over WSS) — e.g. `relay.example.com`
+- **Chunked delivery** tolerates temporary packet loss and jitter better than strict continuous pipelines.
+- **Retry-friendly fetch model** handles transient 404 / eventual consistency delays.
+- **Out-of-order tolerance** in control + chunk metadata allows recovery from relay timing mismatch.
+- **Buffered playback strategy** (MSE path) supports rebuffer/resume behavior instead of hard failure.
+- **Compatibility mode** keeps playback available when ideal pipeline assumptions break.
 
-### 2) DNS
-Create **A records** for each hostname to your VPS public IP.
-
-Important:
-- Ensure **only one A record** per name (don’t leave old host IPs around).
-- Lower TTL (e.g. 60–300s) while iterating.
-
-### 3) Configure Caddy
-Edit `Caddyfile` and replace the hostnames with your chosen ones:
-
-```caddy
-DEMO_HOST {
-  root * /srv/web
-  file_server
-}
-
-BLOSSOM_HOST {
-  reverse_proxy blossom:3000
-}
-
-RELAY_HOST {
-  reverse_proxy relay:8080
-}
-```
-
-### 4) Configure the web app
-Edit `web/config.js`:
-
-- `RELAYS = ["wss://RELAY_HOST"]`
-- `BLOB_BASE = "https://BLOSSOM_HOST"`
-
-### 5) Run
-On the VPS:
-
-```bash
-git clone https://github.com/tidley/blossom-fire-demo.git
-cd blossom-fire-demo
-
-sudo docker compose -f docker-compose.prod.yml up -d
-sudo docker compose -f docker-compose.prod.yml ps
-```
-
-Then open:
-
-- `https://DEMO_HOST/admin.html?stream=demo1`
-- `https://DEMO_HOST/broadcast.html?stream=demo1`
-- `https://DEMO_HOST/view.html?stream=demo1`
-
-Video pages:
-- `https://DEMO_HOST/broadcast-video.html?stream=video3`
-- `https://DEMO_HOST/admin.html?stream=video3`
-- `https://DEMO_HOST/view-video.html?stream=video3`
-
-**Note:** camera + WebCrypto generally require HTTPS (secure context).
+In short: it prefers **eventual playable continuity** over brittle “perfect realtime or fail”.
 
 ---
 
-## Tests
+## Comparison matrix
 
-### Unit tests (CI-friendly)
-
-```bash
-npm install
-npm test
-```
-
-Covers:
-
-- AES-256-GCM encrypt/decrypt + failure on wrong **32-byte AAD hash**
-- NIP-44 wrapper behavior (ensures `getConversationKey()` is used)
-- announcement tag parsing
-- admin allowlist gating → which viewer payloads are forwarded
-- MSE append queue logic (next-chunk selection + pruning)
-
-### Minimal E2E tests (non-browser)
-
-This repo includes a small Node-based sanity test suite:
-
-```bash
-npm install
-RELAY=wss://relay.tomdwyer.uk BLOSSOM=https://blossom.tomdwyer.uk npm run test:e2e
-```
-
-It checks:
-
-- blob upload/fetch roundtrip
-- relay publish/subscribe roundtrip
-- NIP-44 encrypt/decrypt roundtrip
-
-### Browser E2E smoke tests (Playwright)
-
-These are intentionally lightweight (they verify the pages boot and basic UI state works).
-
-```bash
-# start local services (relay + blob + static web)
-docker compose up -d
-
-# run
-npm run test:e2e:pw
-```
+| Property | Blossom Fire (this project) | Hivetalk-style realtime platforms | WebRTC + centralized SFU apps | Tokenized video networks (e.g. Livepeer-style) |
+|---|---|---|---|---|
+| Identity portability | High (Nostr keys/events) | Medium | Low-Medium | Medium |
+| Control-plane sovereignty | High | Medium | Low-Medium | Medium |
+| Data-plane sovereignty | High (self-hostable blobs) | Medium | Low-Medium | Medium-High |
+| Browser realtime smoothness | Medium (improving) | High | High | Medium |
+| Works on poor networks | High (chunk/retry/degrade) | Medium | Medium | Medium-High |
+| Infra complexity | Medium | Medium | Medium | High |
+| Vendor/platform lock-in risk | Low | Medium | Medium-High | Medium |
+| Auditable trust boundaries | High | Medium | Low-Medium | Medium |
 
 ---
 
-## Moving to video (next)
+## Core protocol flow (simplified)
 
-The upgrade is conceptual, not architectural:
-
-- slideshow frames → **MediaRecorder chunks** (e.g. 1s)
-- encrypt each chunk with a fresh `K_i`
-- upload ciphertext chunk to Blossom
-- announce chunk on Nostr
-- admin forwards keys via NIP-44
-
-Viewer playback will use **Media Source Extensions (MSE)** to append decrypted fMP4/WebM chunks.
-
-Recommended next steps:
-
-1. Replace frame capture with `MediaRecorder(stream, {mimeType})` (timeslice 1000ms)
-2. Encrypt/upload each chunk
-3. Implement MSE buffer append on the viewer
+1. **Viewer requests access** (`access_req` via NIP-17)
+2. **Broadcaster emits chunk + metadata** (`adminkey`, announcement event)
+3. **Admin forwards authorization material** (`viewerkey`) to allowed viewers
+4. **Viewer fetches chunk blob + decodes** if authorized
+5. **Playback uses MSE or compatibility mode** depending on runtime stability
 
 ---
 
-## Security notes (POC)
+## Reliability and safety notes
 
-- This is a demo. Keys live in browser memory/localStorage.
-- Relay is likely permissive/open unless you lock it down.
-- Revocation is forward-only (stop sending future keys).
-- For production, you’d add payment gating, allowlists, pairing, rate limits, and stronger operational security.
+- Current browser behavior differs significantly across engines; compatibility mode is expected for some Chrome cases.
+- This is a demo/prototype architecture, not a hardened production security product.
+- Keep admin keys and deployment boundaries under your direct operational control.
+
+---
+
+## Local development
+
+Project root: `/home/tom/code/sec06/blossom-fire-demo`
+
+Key areas:
+
+- `web/` — broadcaster/admin/viewer frontends
+- `blob/` — blob service
+- `relay/` — relay service
+- `docker-compose*.yml` — local/prod orchestration
+- `tests-*.mjs` — protocol and pipeline tests
+
+---
+
+## Strategic direction
+
+Short term:
+
+- stabilize Chrome MSE path while keeping compatibility fallback
+- improve queue telemetry (mode + queue depth + drift)
+- better cache-busting and deployment observability
+
+Long term:
+
+- stronger end-to-end encrypted media key lifecycle
+- robust low-bandwidth adaptation profiles
+- policy tooling for operator-defined sovereignty defaults

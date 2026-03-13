@@ -5,19 +5,161 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Blossom Fire Demo</title>
     <style>
-      body { font-family: system-ui, sans-serif; margin: 24px; }
-      code { background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }
-      a { display: block; margin: 8px 0; }
+      :root { color-scheme: dark; }
+      body { font-family: system-ui, sans-serif; margin: 0; background: #0b0e14; color: #e6edf3; }
+      .wrap { max-width: 860px; margin: 0 auto; padding: 28px 16px; }
+      h1 { margin: 0 0 6px; font-size: 28px; }
+      p { color: #9aa7bd; margin: 0 0 18px; }
+      code { background: #1a2233; color: #d2e0ff; padding: 2px 6px; border-radius: 4px; }
+      .card { border: 1px solid #2f3540; border-radius: 10px; background: #111826; padding: 14px; margin: 14px 0; }
+      .card h3 { margin: 0 0 10px; font-size: 17px; }
+      .btns { display: grid; gap: 10px; }
+      .btn {
+        display: block;
+        text-decoration: none;
+        color: #e6edf3;
+        background: #1a2233;
+        border: 1px solid #3a4354;
+        border-radius: 8px;
+        padding: 10px 12px;
+      }
+      .btn:hover { border-color: #7ab8ff; }
+      .stream-row { display: flex; gap: 10px; align-items: center; margin: 0 0 12px; flex-wrap: wrap; }
+      .stream-row input { background: #1a2233; color: #e6edf3; border: 1px solid #3a4354; border-radius: 8px; padding: 8px 10px; min-width: 180px; }
+      .qr { margin-top: 10px; display: grid; gap: 8px; justify-items: start; }
+      .qr img { border: 1px solid #3a4354; border-radius: 10px; background: #fff; width: 360px; height: 360px; }
+      .mini { font-size: 12px; color: #9aa7bd; }
     </style>
   </head>
   <body>
-    <h2>Blossom Fire Demo (LAN)</h2>
-    <p>Use <code>?stream=demo1</code> on each page.</p>
-    <a href="/admin.html?stream=demo1">Admin</a>
-    <a href="/broadcast.html?stream=demo1">Broadcast (camera → encrypted frames)</a>
-    <a href="/view.html?stream=demo1">View (auto-keygen → request access)</a>
-    <hr>
-    <a href="/broadcast-video.html?stream=demo1">Broadcast Video (MediaRecorder → encrypted chunks)</a>
-    <a href="/view-video.html?stream=demo1">View Video (MSE → decrypt+append)</a>
+    <div class="wrap">
+      <h1>Blossom Fire</h1>
+      <div class="stream-row">
+        <label for="streamId">Stream ID</label>
+        <input id="streamId" type="text" value="" placeholder="auto" />
+        <button id="regen" type="button">New ID</button>
+      </div>
+      <p>Pick a mode. Links below use the selected stream id.</p>
+
+      <section class="card">
+        <h3>Admin</h3>
+        <div class="btns">
+          <a class="btn" data-page="admin.html" href="/admin.html?stream=demo1">Admin (shared)</a>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>Frames mode</h3>
+        <p><small>Use one Admin page per stream. It handles key forwarding for both Frames and Video.</small></p>
+        <div class="btns">
+          <a class="btn" data-page="broadcast.html" href="/broadcast.html?stream=demo1">Broadcast Frames</a>
+          <a class="btn" id="viewFramesLink" data-page="view.html" href="/view.html?stream=demo1">View Frames</a>
+        </div>
+        <div class="qr">
+          <img id="viewFramesQr" alt="QR code for View Frames link" />
+          <div class="mini" id="viewFramesUrl"></div>
+          <button id="copyViewFrames" type="button">Copy View Frames URL</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h3>Video mode</h3>
+        <p><small>Uses the same Admin page above, same stream id.</small></p>
+        <div class="btns">
+          <a class="btn" data-page="broadcast-video.html" href="/broadcast-video.html?stream=demo1">Broadcast Video</a>
+          <a class="btn" data-page="broadcast-llhls.html" href="/broadcast-llhls.html?stream=demo1">Broadcast LL-HLS (test)</a>
+          <a class="btn" id="viewVideoLink" data-page="view-video.html" href="/view-video.html?stream=demo1">View Video</a>
+          <a class="btn" data-page="view-llhls.html" href="/view-llhls.html?stream=demo1">View LL-HLS (test)</a>
+        </div>
+        <div class="qr">
+          <img id="viewVideoQr" alt="QR code for View Video link" />
+          <div class="mini" id="viewVideoUrl"></div>
+          <button id="copyViewVideo" type="button">Copy View Video URL</button>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      const input = document.getElementById('streamId');
+      const regenBtn = document.getElementById('regen');
+      const links = Array.from(document.querySelectorAll('a[data-page]'));
+      const viewFramesLink = document.getElementById('viewFramesLink');
+      const viewFramesQr = document.getElementById('viewFramesQr');
+      const viewFramesUrl = document.getElementById('viewFramesUrl');
+      const copyViewFrames = document.getElementById('copyViewFrames');
+      const viewVideoLink = document.getElementById('viewVideoLink');
+      const viewVideoQr = document.getElementById('viewVideoQr');
+      const viewVideoUrl = document.getElementById('viewVideoUrl');
+      const copyViewVideo = document.getElementById('copyViewVideo');
+
+      function randomStreamId() {
+        return Math.random().toString(36).slice(2, 8);
+      }
+
+      function normalizeStream(v) {
+        const s = (v || '').trim().toLowerCase();
+        return s || randomStreamId();
+      }
+
+      function setQueryStream(stream) {
+        const u = new URL(location.href);
+        u.searchParams.set('stream', stream);
+        history.replaceState(null, '', u.toString());
+      }
+
+      function updateLinks() {
+        let stream = (input.value || '').trim().toLowerCase();
+        if (!stream) {
+          stream = randomStreamId();
+          input.value = stream;
+        }
+
+        const encoded = encodeURIComponent(stream);
+        links.forEach((a) => {
+          const page = a.getAttribute('data-page');
+          a.href = `/${page}?stream=${encoded}`;
+        });
+
+        const framesAbs = new URL(viewFramesLink.getAttribute('href'), location.origin).toString();
+        viewFramesUrl.textContent = framesAbs;
+        viewFramesQr.src = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=${encodeURIComponent(framesAbs)}`;
+
+        const abs = new URL(viewVideoLink.getAttribute('href'), location.origin).toString();
+        viewVideoUrl.textContent = abs;
+        viewVideoQr.src = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&data=${encodeURIComponent(abs)}`;
+
+        setQueryStream(stream);
+      }
+
+      copyViewFrames.addEventListener('click', async () => {
+        const text = viewFramesUrl.textContent || '';
+        try {
+          await navigator.clipboard.writeText(text);
+          copyViewFrames.textContent = 'Copied';
+          setTimeout(() => (copyViewFrames.textContent = 'Copy View Frames URL'), 1000);
+        } catch {}
+      });
+
+      copyViewVideo.addEventListener('click', async () => {
+        const text = viewVideoUrl.textContent || '';
+        try {
+          await navigator.clipboard.writeText(text);
+          copyViewVideo.textContent = 'Copied';
+          setTimeout(() => (copyViewVideo.textContent = 'Copy View Video URL'), 1000);
+        } catch {}
+      });
+
+      regenBtn.addEventListener('click', () => {
+        input.value = randomStreamId();
+        updateLinks();
+      });
+
+      input.addEventListener('input', updateLinks);
+
+      // CLI/URL override support: /?stream=demo2
+      const qStream = new URL(location.href).searchParams.get('stream');
+      input.value = normalizeStream(qStream || input.value);
+      updateLinks();
+    </script>
   </body>
 </html>

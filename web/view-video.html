@@ -3,180 +3,534 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>View Video</title>
+    <title>Viewer Video</title>
     <style>
-      body { font-family: system-ui, sans-serif; margin: 16px; }
-      .box { padding: 12px; border: 1px solid #ddd; border-radius: 8px; }
-      code { background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }
-      video { width: 100%; max-width: 900px; border: 1px solid #ddd; border-radius: 8px; margin-top: 12px; }
-      .small { color: #666; font-size: 12px; }
+      :root { color-scheme: dark; }
+      body { font-family: system-ui, sans-serif; margin: 16px; background: #0b0e14; color: #e6edf3; }
+      .box { padding: 12px; border: 1px solid #2f3540; border-radius: 10px; background: #111826; }
+      .row { display: flex; gap: 12px; flex-wrap: wrap; }
+      .meta { display: grid; gap: 8px; }
+      .kv { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+      .label { color: #9aa7bd; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+      .value { font-weight: 600; }
+      .grid { display: grid; grid-template-columns: 1fr 420px; gap: 16px; align-items: start; }
+      @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+      code { background: #1a2233; color: #d2e0ff; padding: 2px 4px; border-radius: 4px; }
+      a { color: #7ab8ff; }
+      .small { color: #9aa7bd; font-size: 12px; }
+      button, input { font-size: 16px; background: #1a2233; color: #e6edf3; border: 1px solid #3a4354; border-radius: 6px; }
+      button { padding: 6px 10px; cursor: pointer; }
+      video, canvas, img { max-width: 100%; border: 1px solid #2f3540; border-radius: 8px; background: #000; }
+      .viewer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid #253043; }
+          .titlebar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+      .stream-jump { display:flex; align-items:center; gap:8px; }
+      .stream-jump input { width: 140px; padding: 6px 8px; }
+      .stream-jump button { padding: 6px 10px; }
     </style>
   </head>
   <body>
-    <h2>Viewer (near-live video)</h2>
-    <div class="box">
-      <div>Stream: <code id="stream"></code></div>
-      <div>Your npub: <code id="npub"></code></div>
-      <div>Status: <span id="status">starting…</span></div>
-      <div class="small">Auto-generates a nostr keypair (localStorage) and auto-requests access.</div>
+    <div class="titlebar">
+    <h2>Viewer</h2>
+    <div class="stream-jump">
+      <label for="streamJump">Stream ID</label>
+      <input id="streamJump" type="text" value="" placeholder="auto" />
+      <button id="goStream" type="button">Go</button>
+    </div>
+  </div>
+    <div class="box meta">
+      <div class="kv"><span class="label">Stream</span><span class="value"><code id="stream"></code></span></div>
+      <div class="kv"><span class="label">Viewer npub</span><span class="value"><code id="npubShort"></code></span></div>
+      <div class="kv"><span class="label">Status</span><span class="value" id="status">starting…</span></div>
+      <div class="kv"><span class="label">Key</span><span class="value" id="keyId">—</span></div>
+      <div class="kv"><span class="label">Buffer Remaining</span><span class="value" id="bufferSec">0.0s</span></div>
     </div>
 
     <video id="v" controls autoplay playsinline muted></video>
 
     <script type="module">
-      import { TAG_REQ, TAG_DEMO_VIDEO } from './config.js';
+      import { TAG_REQ, TAG_DEMO_VIDEO, ADMIN_SK_HEX } from './config.js';
       import { blobFetch } from './blob.js';
-      import { aesGcmDecrypt, b64decode, utf8Bytes, sha256Bytes } from './crypto.js';
-      import { createPump } from './mse-pump.js';
-      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, sub, nip44Decrypt } from './util.js';
+      import { aesGcmDecrypt, b64decode, utf8Bytes } from './crypto.js';
+      import {
+        getStreamId,
+        getOrCreateViewerKeypair,
+        makeSignedEventUnsigned,
+        publish,
+        sub,
+        nip17UnwrapJson,
+        nip17WrapJson,
+        skFromHex,
+        pubkeyFromSk,
+      } from './util.js';
 
-      const streamId = getStreamId();
+      const streamId = (getStreamId() || 'demo1').trim() || 'demo1';
       document.querySelector('#stream').textContent = streamId;
 
+      const streamJumpEl = document.querySelector('#streamJump');
+      const goStreamEl = document.querySelector('#goStream');
+      if (streamJumpEl && goStreamEl) {
+        streamJumpEl.value = streamId;
+        const go = () => {
+          const next = (streamJumpEl.value || '').trim();
+          if (!next) return;
+          const u = new URL(location.href);
+          u.searchParams.set('stream', next);
+          location.href = u.toString();
+        };
+        goStreamEl.onclick = go;
+        streamJumpEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      }
+
+
       const viewer = getOrCreateViewerKeypair('demo.viewer.sk');
-      document.querySelector('#npub').textContent = viewer.npub;
+      const shortNpub = `${viewer.npub.slice(0, 14)}…${viewer.npub.slice(-6)}`;
+      document.querySelector('#npubShort').textContent = shortNpub;
 
       const statusEl = document.querySelector('#status');
+      const keyIdEl = document.querySelector('#keyId');
+      const bufferEl = document.querySelector('#bufferSec');
       const videoEl = document.querySelector('#v');
+
+      const keys = new Map();      // chunkId -> { keyB64, blobHash, mime }
+      const announced = new Map(); // chunkId -> { blobHash, mime }
+      const appended = new Set();
+      let currentKeyB64 = null;
+      let currentKeyId = null;
+      let expectedChunkId = 0;
 
       function setStatus(s) { statusEl.textContent = s; }
 
-      // State
-      const keys = new Map();       // chunkId -> { keyB64, blobHash, mime, codec }
-      const announced = new Map();  // chunkId -> { blobHash, mime, codec }
-      const decrypted = new Map();  // chunkId -> Uint8Array
-      let lastRendered = -1;
+      const adminPub = pubkeyFromSk(skFromHex(ADMIN_SK_HEX));
 
-      let mediaSource = null;
-      let sourceBuffer = null;
-      let codecStr = null;
-
-      let pump = () => {};
-
-      function ensureMse(codec) {
-        if (mediaSource) return;
-        codecStr = codec || 'video/webm;codecs=vp8,opus';
-        if (!('MediaSource' in window)) {
-          setStatus('error: MediaSource not supported in this browser');
-          return;
-        }
-        if (!MediaSource.isTypeSupported(codecStr)) {
-          setStatus(`error: codec not supported: ${codecStr}`);
-          return;
-        }
-        mediaSource = new MediaSource();
-        videoEl.src = URL.createObjectURL(mediaSource);
-        mediaSource.addEventListener('sourceopen', () => {
-          try {
-            sourceBuffer = mediaSource.addSourceBuffer(codecStr);
-            sourceBuffer.mode = 'sequence';
-            pump = createPump({
-              sourceBuffer,
-              decrypted,
-              getLastAppended: () => lastRendered,
-              setLastAppended: (n) => { lastRendered = n; },
-              onStatus: setStatus,
-            });
-            sourceBuffer.addEventListener('updateend', pump);
-            sourceBuffer.addEventListener('error', (e) => {
-              console.error('sourceBuffer error', e);
-              setStatus('sourceBuffer error (see console)');
-            });
-            setStatus(`ready (codec ${codecStr})`);
-            pump();
-          } catch (e) {
-            console.error(e);
-            setStatus(`error creating SourceBuffer: ${e.message || e}`);
-          }
-        }, { once: true });
+      async function sendAccessHeartbeat() {
+        try {
+          const dm = await nip17WrapJson(viewer.sk, adminPub, {
+            type: 'access_req',
+            streamId,
+            role: 'viewer-video',
+            heartbeat: true,
+            ts: Math.floor(Date.now() / 1000),
+            v: 1,
+          });
+          await publish(dm);
+        } catch {}
       }
 
-      async function tryDecrypt(chunkId) {
-        if (decrypted.has(chunkId)) return;
-        const k = keys.get(chunkId);
-        const a = announced.get(chunkId);
-        if (!k || !a) return;
-
-        const blobHash = k.blobHash || a.blobHash;
-        const mime = k.mime || a.mime || 'video/webm';
-        const codec = k.codec || a.codec || mime;
-
-        ensureMse(codec);
-
-        const payload = await blobFetch(blobHash);
-        const iv = payload.slice(0, 12);
-        const ct = payload.slice(12);
-        const keyBytes = b64decode(k.keyB64);
-        const aad = await sha256Bytes(utf8Bytes(`${streamId}:${chunkId}`));
-        const pt = await aesGcmDecrypt(keyBytes, iv, ct, { aadBytes: aad });
-        decrypted.set(chunkId, pt);
-        pump();
-      }
-
-      // `pump()` is created once the MSE SourceBuffer exists.
-
-      // Publish access request
+      // Auto-request access (kind1 + NIP-17 fallback)
       const req = makeSignedEventUnsigned(1, viewer.sk, {
-        content: 'request',
+        content: 'request-video',
         tags: [ ['t', TAG_REQ], ['d', streamId] ]
       });
       await publish(req);
-      setStatus('requested access; waiting for keys…');
+      await sendAccessHeartbeat();
+      setInterval(sendAccessHeartbeat, 5000);
+      setStatus('requested access; waiting for video keys…');
 
-      // Subscribe to announcements
+      // MSE setup
+      const mimeCandidates = [
+        'video/webm; codecs="vp8"',
+        'video/webm; codecs="vp9"',
+        'video/webm; codecs="vp8,opus"',
+        'video/webm; codecs="vp9,opus"',
+        'video/webm'
+      ];
+      const mseMime = mimeCandidates.find(m => MediaSource.isTypeSupported(m));
+      if (!mseMime) {
+        setStatus('error: browser does not support MSE WebM');
+      }
+
+      let ms = null;
+      let sb = null;
+      let pipelineGen = 0;
+      const queue = [];
+      const TARGET_BUFFER_SEC = 16;
+      const REBUFFER_RESUME_SEC = 16;
+      const AUTO_PAUSE_LOW_WATER_SEC = 2;
+      const CHUNK_BUFFER_TARGET = 6; // chunk-mode prebuffer depth (chunks)
+      const CHUNK_RESUME_TARGET = 4;
+      let startedPlayback = false;
+      let hasPlayedOnce = false;
+      let mseFailures = 0;
+      let fallbackMode = false;
+      let currentObjectUrl = null;
+      let streamMimeHint = null;
+      let userPaused = false;
+      const chunkQueue = [];
+      let chunkPlaying = false;
+      const isChrome = /Chrome\//.test(navigator.userAgent) && !/Edg\//.test(navigator.userAgent);
+      const u = new URL(location.href);
+      const forceChunk = u.searchParams.get('chunk') === '1';
+      const forceMse = u.searchParams.get('mse') === '1';
+      const tryMseFirstOnChrome = !!forceMse;
+      const preferChunkFallback = forceChunk || (isChrome && !forceMse);
+
+      function ensureSourceBuffer(gen = pipelineGen) {
+        if (!ms || ms.readyState !== 'open' || sb) return;
+        const preferred = streamMimeHint && MediaSource.isTypeSupported(streamMimeHint)
+          ? streamMimeHint
+          : mseMime;
+        if (!preferred) {
+          setStatus('error: browser does not support stream mime');
+          return;
+        }
+        try {
+          sb = ms.addSourceBuffer(preferred);
+          sb.mode = 'sequence';
+          sb.addEventListener('updateend', async () => {
+            if (gen !== pipelineGen) return;
+            pump();
+            await maybeStartPlayback();
+          });
+        } catch (e) {
+          setStatus(`MSE addSourceBuffer failed (${preferred})`);
+          console.error(e);
+        }
+      }
+
+      function resetPipeline(reason = 'reset') {
+        if (fallbackMode) return;
+        pipelineGen += 1;
+        const gen = pipelineGen;
+        try {
+          if (sb && sb.updating) {
+            try { sb.abort(); } catch {}
+          }
+        } catch {}
+        sb = null;
+        queue.length = 0;
+        startedPlayback = false;
+        ms = new MediaSource();
+        videoEl.src = URL.createObjectURL(ms);
+        setStatus(`${reason}… waiting for next chunks`);
+
+        ms.addEventListener('sourceopen', () => {
+          if (gen !== pipelineGen) return;
+          ensureSourceBuffer(gen);
+          pump();
+        }, { once: true });
+      }
+
+      async function playFallbackChunk(bytes, mime = 'video/webm') {
+        try {
+          if (bytes && bytes.length) chunkQueue.push({ bytes, mime });
+          while (chunkQueue.length > CHUNK_BUFFER_TARGET * 2) chunkQueue.shift();
+
+          const target = hasPlayedOnce ? CHUNK_RESUME_TARGET : CHUNK_BUFFER_TARGET;
+          if (!chunkPlaying && chunkQueue.length < target) {
+            setStatus(`compatibility mode: buffering chunks (${chunkQueue.length}/${target})`);
+            return;
+          }
+          if (chunkPlaying) return;
+          if (userPaused) return;
+          if (chunkQueue.length === 0) return;
+
+          const next = chunkQueue.shift();
+          chunkPlaying = true;
+          if (currentObjectUrl) {
+            try { URL.revokeObjectURL(currentObjectUrl); } catch {}
+            currentObjectUrl = null;
+          }
+          const blob = new Blob([next.bytes], { type: next.mime || mime });
+          currentObjectUrl = URL.createObjectURL(blob);
+          videoEl.src = currentObjectUrl;
+          await videoEl.play().catch(() => {});
+          startedPlayback = true;
+          hasPlayedOnce = true;
+          setStatus(`fallback mode: playing (${chunkQueue.length} chunks queued)`);
+        } catch (e) {
+          setStatus(`fallback error: ${e.message || e}`);
+          chunkPlaying = false;
+        }
+      }
+
+      async function handleDecodedChunk(bytes, mime = 'video/webm', gen = pipelineGen) {
+        if (gen !== pipelineGen) return;
+        if (mime) streamMimeHint = mime;
+        if (fallbackMode || preferChunkFallback) {
+          await playFallbackChunk(bytes, mime);
+          return;
+        }
+        ensureSourceBuffer(gen);
+        enqueue(bytes, gen);
+      }
+
+      resetPipeline('init');
+      if (isChrome && !preferChunkFallback) {
+        setStatus('chrome: trying MSE first (auto-fallback on failure)');
+      }
+
+      function enqueue(bytes, gen = pipelineGen) {
+        queue.push({ bytes, gen });
+        pump();
+      }
+
+      function bufferedAheadSec() {
+        try {
+          const b = videoEl.buffered;
+          if (!b || b.length === 0) return 0;
+          const end = b.end(b.length - 1);
+          const cur = Number.isFinite(videoEl.currentTime) ? videoEl.currentTime : 0;
+          return Math.max(0, end - cur);
+        } catch {
+          return 0;
+        }
+      }
+
+      function updateBufferUi() {
+        if (fallbackMode || preferChunkFallback) {
+          bufferEl.textContent = `${chunkQueue.length} chunks`;
+          return;
+        }
+        const sec = bufferedAheadSec();
+        bufferEl.textContent = `${sec.toFixed(1)}s`;
+      }
+
+      async function maybeStartPlayback() {
+        if (startedPlayback) return;
+        const need = hasPlayedOnce ? REBUFFER_RESUME_SEC : TARGET_BUFFER_SEC;
+        if (bufferedAheadSec() < need) return;
+        try {
+          await videoEl.play();
+          startedPlayback = true;
+          hasPlayedOnce = true;
+          setStatus(`playing (buffer ~${Math.round(bufferedAheadSec())}s)`);
+        } catch {}
+      }
+
+      function pump() {
+        if (!ms) return;
+        if (ms.readyState !== 'open') return;
+        if (!sb) ensureSourceBuffer(pipelineGen);
+        if (!sb) return;
+        if (sb.updating) return;
+        if (queue.length === 0) return;
+        if (![...ms.sourceBuffers].includes(sb)) return;
+
+        while (queue.length > 0 && queue[0].gen !== pipelineGen) queue.shift();
+        if (queue.length === 0) return;
+
+        const next = queue.shift();
+        try {
+          sb.appendBuffer(next.bytes);
+        } catch (e) {
+          const msg = String((e && e.message) || e || '');
+          if (
+            e?.name === 'InvalidStateError' ||
+            msg.includes('SourceBuffer has been removed') ||
+            msg.includes('no longer usable') ||
+            msg.includes('is not, or is no longer, usable') ||
+            msg.includes('Timecode element must appear before any Block')
+          ) {
+            mseFailures += 1;
+            if (mseFailures >= 3) {
+              fallbackMode = true;
+              setStatus('MSE unstable; switched to compatibility mode (latest chunk playback)');
+            } else {
+              resetPipeline('pipeline recovered');
+            }
+            return;
+          }
+          console.error(e);
+        }
+      }
+
+      // Subscribe to chunk announcements
       sub([
-        { kinds: [1], '#t': [TAG_DEMO_VIDEO], limit: 500 }
+        { kinds: [1], '#t': [TAG_DEMO_VIDEO], '#d': [streamId], limit: 200 }
       ], async (ev) => {
         try {
-          const dTag = ev.tags.find(t => t[0]==='d');
-          if (!dTag || dTag[1] !== streamId) return;
-          const idTag = ev.tags.find(t => t[0]==='i');
-          const xTag = ev.tags.find(t => t[0]==='x');
-          const mTag = ev.tags.find(t => t[0]==='m');
-          const cTag = ev.tags.find(t => t[0]==='c');
-          if (!idTag || !xTag) return;
+          const chunkIdTag = ev.tags.find(t => t[0] === 'i');
+          const blobTag = ev.tags.find(t => t[0] === 'x');
+          const mimeTag = ev.tags.find(t => t[0] === 'm');
+          if (!chunkIdTag || !blobTag) return;
 
-          const chunkId = Number(idTag[1]);
-          const blobHash = xTag[1];
-          const mime = (mTag && mTag[1]) || 'video/webm';
-          if (!mime.startsWith('video/')) return;
-          const codec = (cTag && cTag[1]) || mime;
+          const chunkId = Number(chunkIdTag[1]);
+          const blobHash = blobTag[1];
+          const mime = (mimeTag && mimeTag[1]) || 'video/webm';
+          const encTag = ev.tags.find(t => t[0] === 'enc');
+          const enc = (encTag && encTag[1]) || null;
 
-          // Ignore older chunks
-          if (chunkId <= lastRendered) return;
-
-          announced.set(chunkId, { blobHash, mime, codec });
-          await tryDecrypt(chunkId);
+          announced.set(chunkId, { blobHash, mime, enc });
+          await tryAppend(chunkId);
         } catch (e) {
           console.error(e);
         }
       });
 
-      // Subscribe to NIP-44 key DMs
+      // Subscribe to NIP-17 key DMs
       sub([
-        { kinds: [4], '#p': [viewer.pk], '#d': [streamId], limit: 500 }
+        { kinds: [1059], '#p': [viewer.pk], limit: 500 }
       ], async (ev) => {
         try {
-          const plaintext = nip44Decrypt(viewer.sk, ev.pubkey, ev.content);
-          const msg = JSON.parse(plaintext);
+          const { msg } = nip17UnwrapJson(viewer.sk, ev);
+          if (!msg || msg.type !== 'viewerkey') return;
           if (msg.streamId !== streamId) return;
 
-          // Only accept video keys in the video viewer (avoid slideshow keys on same streamId)
-          const mime = msg.m || 'video/webm';
-          if (!mime.startsWith('video/')) return;
+          if (msg.k) currentKeyB64 = msg.k;
+          if (msg.key_id) currentKeyId = msg.key_id;
+          keyIdEl.textContent = currentKeyId || '—';
 
-          const chunkId = Number(msg.frameId);
-          // Ignore old
-          if (chunkId <= lastRendered) return;
+          keys.set(Number(msg.frameId), {
+            keyB64: msg.k || currentKeyB64,
+            blobHash: msg.x,
+            mime: msg.m || 'video/webm',
+            enc: msg.enc || null,
+          });
+          setStatus(`allowed; got key meta for chunk ${msg.frameId}`);
+          await tryAppend(Number(msg.frameId));
+        } catch {}
+      });
 
-          keys.set(chunkId, { keyB64: msg.k, blobHash: msg.x, mime, codec: msg.c || mime });
-          setStatus(`allowed; got key for chunk ${chunkId}`);
-          await tryDecrypt(chunkId);
+      async function appendOne(chunkId) {
+        if (appended.has(chunkId)) return false;
+        const opGen = pipelineGen;
+        const k = keys.get(chunkId);
+        const a = announced.get(chunkId);
+        if (!k) return false; // access control: require admin viewerkey for each chunk
+
+        const blobHash = k?.blobHash || a?.blobHash;
+        if (!blobHash) return false;
+
+        let payload;
+        try {
+          payload = await blobFetch(blobHash);
         } catch (e) {
-          // ignore undecryptable
+          const msg = String((e && e.message) || e || '');
+          if (msg.includes('404')) {
+            setStatus(`waiting for blob chunk ${chunkId}…`);
+            setTimeout(() => { tryAppend(chunkId); }, 350);
+            return false;
+          }
+          setStatus(`blob fetch error for chunk ${chunkId}`);
+          console.error(e);
+          return false;
+        }
+        if (opGen !== pipelineGen) return false;
+
+        const plain = (k?.enc === 'none') || (a?.enc === 'none');
+        if (plain) {
+          const mime = k?.mime || a?.mime || 'video/webm';
+          await handleDecodedChunk(payload, mime, opGen);
+          if (opGen !== pipelineGen) return false;
+          mseFailures = 0;
+          appended.add(chunkId);
+          await maybeStartPlayback();
+          return true;
+        }
+
+        if (!k.keyB64) return false;
+        const iv = payload.slice(0, 12);
+        const ct = payload.slice(12);
+        const keyBytes = b64decode(k.keyB64);
+        const aad = utf8Bytes(`${streamId}:${chunkId}`);
+
+        try {
+          const pt = await aesGcmDecrypt(keyBytes, iv, ct, { aadBytes: aad });
+          if (opGen !== pipelineGen) return false;
+          const mime = k?.mime || a?.mime || 'video/webm';
+          await handleDecodedChunk(pt, mime, opGen);
+          if (opGen !== pipelineGen) return false;
+          mseFailures = 0;
+          appended.add(chunkId);
+          await maybeStartPlayback();
+          return true;
+        } catch (e) {
+          const msg = String((e && e.message) || e || '');
+          if (msg.includes('Timecode element must appear before any Block')) {
+            resetPipeline('decoder resync');
+            setStatus('decoder resyncing…');
+            return false;
+          }
+          setStatus('have blob but not allowed (or wrong key)');
+          return false;
+        }
+      }
+
+      function nextCandidateChunkId() {
+        const ids = new Set([...announced.keys(), ...keys.keys()]);
+        const sorted = [...ids].sort((a, b) => a - b);
+        for (const id of sorted) {
+          if (id < expectedChunkId) continue;
+          if (appended.has(id)) continue;
+          if (!keys.get(id)) continue; // still require access control token
+          return id;
+        }
+        return null;
+      }
+
+      async function tryAppend(_chunkId) {
+        // Append in-order when possible; if viewer joined mid-stream, fast-forward to first authorized chunk.
+        while (true) {
+          const progressed = await appendOne(expectedChunkId);
+          if (progressed) {
+            expectedChunkId += 1;
+            continue;
+          }
+
+          const candidate = nextCandidateChunkId();
+          if (candidate == null) break;
+          if (candidate === expectedChunkId) break;
+
+          expectedChunkId = candidate;
+          setStatus(`syncing from chunk ${expectedChunkId}…`);
+        }
+      }
+
+      videoEl.addEventListener('waiting', () => {
+        const sec = Math.round(bufferedAheadSec());
+        if (fallbackMode || preferChunkFallback) {
+          setStatus(`compatibility mode: waiting (${chunkQueue.length} chunks queued)`);
+          return;
+        }
+        // Gate resume until we have enough headroom again.
+        startedPlayback = false;
+        setStatus(`buffering… (${sec}s buffered)`);
+      });
+      videoEl.addEventListener('playing', () => {
+        if (fallbackMode || preferChunkFallback) {
+          setStatus(`compatibility mode: playing (${chunkQueue.length} chunks queued)`);
+          return;
+        }
+        const sec = Math.round(bufferedAheadSec());
+        setStatus(`playing (${sec}s buffered)`);
+      });
+      videoEl.addEventListener('pause', () => {
+        if (videoEl.ended) return;
+        userPaused = true;
+      });
+      videoEl.addEventListener('play', () => {
+        userPaused = false;
+      });
+      videoEl.addEventListener('ended', async () => {
+        chunkPlaying = false;
+        if (fallbackMode || preferChunkFallback) {
+          if (!userPaused) await playFallbackChunk(new Uint8Array(0));
+        }
+      });
+      videoEl.addEventListener('timeupdate', async () => {
+        if (fallbackMode || preferChunkFallback) return;
+        const sec = bufferedAheadSec();
+        if (!videoEl.paused && sec < AUTO_PAUSE_LOW_WATER_SEC) {
+          videoEl.pause();
+          startedPlayback = false;
+          setStatus(`auto-paused to rebuffer (${Math.round(sec)}s buffered)`);
+          return;
+        }
+        if (videoEl.paused && !userPaused && sec >= REBUFFER_RESUME_SEC) {
+          await maybeStartPlayback();
         }
       });
 
+      setInterval(updateBufferUi, 500);
+      // Keep nudging append in case key/blob events arrive out-of-order or a blob briefly 404s.
+      setInterval(() => { tryAppend(expectedChunkId); }, 700);
+      updateBufferUi();
+
+      setStatus(isChrome && preferChunkFallback
+        ? 'requested access; chrome compatibility mode…'
+        : (isChrome && !preferChunkFallback
+            ? 'requested access; chrome MSE mode (opt-in) …'
+            : 'requested access; waiting…'));
     </script>
   </body>
 </html>

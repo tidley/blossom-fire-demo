@@ -5,16 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Broadcast</title>
     <style>
-      body { font-family: system-ui, sans-serif; margin: 16px; }
+      :root { color-scheme: dark; }
+      body { font-family: system-ui, sans-serif; margin: 16px; background: #0b0e14; color: #e6edf3; }
+      .box { padding: 12px; border: 1px solid #2f3540; border-radius: 8px; background: #111826; }
       .row { display: flex; gap: 16px; flex-wrap: wrap; }
-      video, canvas, img { max-width: 360px; width: 100%; border: 1px solid #ddd; border-radius: 8px; }
-      input, button { font-size: 16px; }
-      .box { padding: 12px; border: 1px solid #ddd; border-radius: 8px; }
-      code { background: #f2f2f2; padding: 2px 4px; border-radius: 4px; }
+      .grid { display: grid; grid-template-columns: 1fr 420px; gap: 16px; align-items: start; }
+      @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+      code { background: #1a2233; color: #d2e0ff; padding: 2px 4px; border-radius: 4px; }
+      a { color: #7ab8ff; }
+      .small { color: #9aa7bd; font-size: 12px; }
+      button, input { font-size: 16px; background: #1a2233; color: #e6edf3; border: 1px solid #3a4354; border-radius: 6px; }
+      button { padding: 6px 10px; cursor: pointer; }
+      video, canvas, img { max-width: 100%; border: 1px solid #2f3540; border-radius: 8px; background: #000; }
+      .viewer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid #253043; }
+          .titlebar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+      .stream-jump { display:flex; align-items:center; gap:8px; }
+      .stream-jump input { width: 140px; padding: 6px 8px; }
+      .stream-jump button { padding: 6px 10px; }
     </style>
   </head>
   <body>
+    <div class="titlebar">
     <h2>Broadcast (camera → encrypted slideshow)</h2>
+    <div class="stream-jump">
+      <label for="streamJump">Stream ID</label>
+      <input id="streamJump" type="text" value="" placeholder="auto" />
+      <button id="goStream" type="button">Go</button>
+    </div>
+  </div>
     <div class="box">
       <div>Stream: <code id="stream"></code></div>
       <div>Broadcaster npub: <code id="npub"></code></div>
@@ -38,15 +56,29 @@
     </div>
 
     <script type="module">
-      import { TAG_DEMO, TAG_REQ } from './config.js';
+      import { TAG_DEMO, ADMIN_SK_HEX } from './config.js';
       import { blobUpload } from './blob.js';
-      import { aesGcmEncrypt, utf8Bytes, sha256Bytes, b64encode } from './crypto.js';
-      import { deriveChunkKey } from './deriveChunkKey.js';
-      import { createMember } from './mls.js';
-      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, sub, nip44Decrypt } from './util.js';
+      import { aesGcmEncrypt, randKey32, utf8Bytes, b64encode } from './crypto.js';
+      import { getStreamId, getOrCreateViewerKeypair, makeSignedEventUnsigned, publish, nip17WrapJson, skFromHex, pubkeyFromSk, npubFromPubkey } from './util.js';
 
       const streamId = getStreamId();
       document.querySelector('#stream').textContent = streamId;
+
+      const streamJumpEl = document.querySelector('#streamJump');
+      const goStreamEl = document.querySelector('#goStream');
+      if (streamJumpEl && goStreamEl) {
+        streamJumpEl.value = streamId;
+        const go = () => {
+          const next = (streamJumpEl.value || '').trim();
+          if (!next) return;
+          const u = new URL(location.href);
+          u.searchParams.set('stream', next);
+          location.href = u.toString();
+        };
+        goStreamEl.onclick = go;
+        streamJumpEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      }
+
 
       // Broadcaster identity (stored locally)
       const broadcaster = getOrCreateViewerKeypair('demo.broadcaster.sk');
@@ -172,7 +204,21 @@
           });
           await publish(ann);
 
-          setStatus(`sent frame ${frameId} (epoch ${mls.group_epoch()}) → ${hash.slice(0, 8)}…`);
+          // send key to admin via NIP-17 gift-wrap (kind 1059)
+          const dm = await nip17WrapJson(broadcaster.sk, adminPub, {
+            type: 'adminkey',
+            streamId,
+            frameId,
+            x: hash,
+            k: b64encode(key),
+            key_id: `frame-${frameId}`,
+            m: 'image/webp',
+            alg: 'aes-gcm',
+            v: 1,
+          });
+          await publish(dm);
+
+          setStatus(`sent frame ${frameId} → ${hash.slice(0, 8)}…`);
           frameId++;
         } catch (e) {
           console.error(e);

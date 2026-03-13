@@ -1,10 +1,10 @@
+import * as nostrTools from "https://esm.sh/nostr-tools@2.10.2";
 import {
   SimplePool,
   finalizeEvent,
   generateSecretKey,
   getPublicKey,
   nip19,
-  nip44,
 } from "https://esm.sh/nostr-tools@2.10.2";
 
 import { nip44EncryptWith, nip44DecryptWith } from './nip44wrap.js';
@@ -22,6 +22,17 @@ export function hexToBytes(hex) {
 }
 
 import { RELAYS } from "./config.js";
+
+function bytesToHex(bytes) {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function hexToBytes(hex) {
+  if (typeof hex !== "string" || hex.length % 2 !== 0) throw new Error("invalid hex");
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
 
 export const pool = new SimplePool();
 
@@ -70,14 +81,9 @@ export async function publish(event) {
 }
 
 export function sub(filters, onEvent) {
-  // nostr-tools SimplePool APIs differ by version/build.
-  // Prefer subscribeMany (v2), then sub (older builds).
+  // nostr-tools SimplePool APIs differ by build/version.
   if (typeof pool.subscribeMany === "function") {
-    // subscribeMany(relays, filters, handlers)
-    const sub = pool.subscribeMany(RELAYS, filters, {
-      onevent: onEvent,
-    });
-    return sub;
+    return pool.subscribeMany(RELAYS, filters, { onevent: onEvent });
   }
   if (typeof pool.sub === "function") {
     const s = pool.sub(RELAYS, filters);
@@ -85,10 +91,7 @@ export function sub(filters, onEvent) {
     return s;
   }
   if (typeof pool.subscribe === "function") {
-    const s = pool.subscribe(RELAYS, filters, {
-      onevent: onEvent,
-    });
-    return s;
+    return pool.subscribe(RELAYS, filters, { onevent: onEvent });
   }
   throw new Error("SimplePool: no subscribe method available");
 }
@@ -104,11 +107,52 @@ export function makeSignedEventUnsigned(kind, sk, { content = "", tags = [] } = 
   return finalizeEvent(ev, sk);
 }
 
-export function nip44Encrypt(sk, recipientPubkeyHex, plaintext) {
-  // nostr-tools nip44.encrypt expects (plaintext, conversationKey, [nonce])
-  return nip44EncryptWith(nip44, sk, recipientPubkeyHex, plaintext);
+// NIP-17 gift-wrap helpers
+// nostr-tools builds may expose this as `nip17` or `nip59`.
+const giftWrap = nostrTools.nip17 || nostrTools.nip59;
+
+function toPrivkeyInput(sk) {
+  return sk instanceof Uint8Array ? bytesToHex(sk) : sk;
 }
 
-export function nip44Decrypt(sk, senderPubkeyHex, ciphertext) {
-  return nip44DecryptWith(nip44, sk, senderPubkeyHex, ciphertext);
+export function nip17WrapJson(senderSk, recipientPubkeyHex, payload) {
+  if (!giftWrap?.wrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
+  const recipient = { publicKey: recipientPubkeyHex, relays: RELAYS };
+  const content = typeof payload === 'string' ? payload : JSON.stringify(payload);
+
+  // Different nostr-tools builds expose different wrapEvent signatures.
+  // Try both event-first and sender-first variants with both Uint8Array and hex keys.
+  const skHex = toPrivkeyInput(senderSk);
+  const rumor = { kind: 14, created_at: now(), tags: [], content };
+  const attempts = [
+    // Variant A: wrapEvent(event, senderSk, recipientPubkey)
+    () => giftWrap.wrapEvent(rumor, senderSk, recipientPubkeyHex),
+    () => giftWrap.wrapEvent(rumor, skHex, recipientPubkeyHex),
+
+    // Variant B: wrapEvent(senderSk, recipientObj, content)
+    () => giftWrap.wrapEvent(senderSk, recipient, content),
+    () => giftWrap.wrapEvent(skHex, recipient, content),
+
+    // Fallback seen in some builds
+    () => giftWrap.wrapEvent(senderSk, recipientPubkeyHex, content),
+    () => giftWrap.wrapEvent(skHex, recipientPubkeyHex, content),
+  ];
+
+  let lastErr = null;
+  for (const fn of attempts) {
+    try {
+      return fn();
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('nip17 wrap failed');
+}
+
+export function nip17UnwrapJson(recipientSk, wrapEv) {
+  if (!giftWrap?.unwrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
+  const inner = giftWrap.unwrapEvent(wrapEv, toPrivkeyInput(recipientSk));
+  let msg = null;
+  try { msg = JSON.parse(inner.content || 'null'); } catch {}
+  return { inner, msg };
 }
