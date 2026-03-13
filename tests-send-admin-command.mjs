@@ -20,6 +20,7 @@ function argValue(name, fallback = '') {
 }
 
 const CMD = argValue('--cmd', '2 on');
+const RAW = process.argv.includes('--raw');
 
 function hexToBytes(hex) {
   const out = new Uint8Array(hex.length / 2);
@@ -50,15 +51,23 @@ if (!gift?.wrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (ni
 function now() { return Math.floor(Date.now() / 1000); }
 
 function wrapCompat(senderSk, recipientPub, payloadText) {
-  try {
-    return gift.wrapEvent(senderSk, { publicKey: recipientPub, relays: [RELAY] }, payloadText);
-  } catch {
-    const rumor = finalizeEvent(
-      { kind: 14, created_at: now(), tags: [], content: payloadText, pubkey: getPublicKey(senderSk) },
-      senderSk
-    );
-    return gift.wrapEvent(rumor, senderSk, recipientPub);
+  const recipient = { publicKey: recipientPub, relays: [RELAY] };
+  const rumor = finalizeEvent(
+    { kind: 14, created_at: now(), tags: [], content: payloadText, pubkey: getPublicKey(senderSk) },
+    senderSk
+  );
+
+  const attempts = [
+    () => gift.wrapEvent(rumor, senderSk, recipientPub),
+    () => gift.wrapEvent(senderSk, recipient, payloadText),
+    () => gift.wrapEvent(senderSk, recipientPub, payloadText),
+  ];
+
+  let lastErr;
+  for (const fn of attempts) {
+    try { return fn(); } catch (e) { lastErr = e; }
   }
+  throw lastErr || new Error('nip17 wrap failed');
 }
 
 async function wsPublish(url, event, senderSk) {
@@ -106,11 +115,30 @@ async function main() {
   const senderSk = hexToBytes(senderSkHex);
   const senderPub = getPublicKey(senderSk);
 
-  // Plain text command expected by admin parser: e.g. "2", "2 on", "2 off", "0"
   const payloadText = String(CMD || '').trim();
   if (!payloadText) throw new Error('empty --cmd');
 
-  const wrap = wrapCompat(senderSk, recipientPub, payloadText);
+  // Default to JSON control payload for deterministic admin parsing.
+  // --raw keeps plain-text mode for manual experiments.
+  let finalContent = payloadText;
+  if (!RAW) {
+    const mSet = payloadText.match(/^(\d+)\s+(on|off)$/i);
+    const mNum = payloadText.match(/^(\d+)$/);
+    if (mSet) {
+      finalContent = JSON.stringify({
+        type: 'set_viewer',
+        index: Number(mSet[1]),
+        allowed: mSet[2].toLowerCase() === 'on',
+      });
+    } else if (mNum) {
+      finalContent = JSON.stringify({
+        type: 'toggle_viewer',
+        index: Number(mNum[1]),
+      });
+    }
+  }
+
+  const wrap = wrapCompat(senderSk, recipientPub, finalContent);
   await wsPublish(RELAY, wrap, senderSk);
 
   console.log('PASS sent admin command DM', {
@@ -119,6 +147,8 @@ async function main() {
     to: TARGET_NPUB,
     stream: TARGET_STREAM || '(not specified in plain cmd)',
     cmd: payloadText,
+    sentContent: finalContent,
+    mode: RAW ? 'raw' : 'json',
   });
 }
 
