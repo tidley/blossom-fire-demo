@@ -46,8 +46,8 @@
     </div>
 
     <script type="module">
-      import { generateSecretKey, getPublicKey, nip19, finalizeEvent, nip42 } from 'https://esm.sh/nostr-tools@2.10.2';
-      import * as nt from 'https://esm.sh/nostr-tools@2.10.2';
+      import { generateSecretKey, getPublicKey, nip19, finalizeEvent, nip42 } from './vendor/nostr-tools.bundle.js';
+      import * as nt from './vendor/nostr-tools.bundle.js';
 
       const RELAY = 'wss://nip17.tomdwyer.uk';
       const gift = nt.nip17 || nt.nip59;
