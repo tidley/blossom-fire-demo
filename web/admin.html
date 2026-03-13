@@ -683,7 +683,6 @@
           lastSourceEl.textContent = `${src.slice(0,14)}…${src.slice(-6)}`;
           setStatus(`receiving keys`);
         } catch (e) {
-          console.error(e);
           diagLastUnwrapEl.textContent = `fail: ${e.message || e}`;
           audit(`dm unwrap skipped/non-json: ${e.message || e}`, 'muted');
         }
