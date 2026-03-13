@@ -92,7 +92,6 @@
       import { TAG_REQ, TAG_DEMO, ADMIN_SK_HEX } from './config.js';
       import { blobFetch } from './blob.js';
       import { aesGcmDecrypt, b64decode, b64encode, utf8Bytes } from './crypto.js';
-      import { createContextVmRuntime } from './contextvm-sdk.js';
       import { createThresholdController } from './context-threshold.js';
       import {
         getStreamId,
@@ -337,12 +336,6 @@
         return controllerNpubs.has(senderNpub);
       }
 
-      const accessVm = createContextVmRuntime({
-        streamId,
-        isSenderAllowed,
-        resolveViewerByIndex,
-      });
-
       const thresholdCtl = createThresholdController({
         threshold: 2,
         isAdmin: (npub) => npub === adminNpub,
@@ -373,41 +366,94 @@
       }
 
       async function toggleViewerByIndex(index, source = 'dm', actorNpub = adminNpub, desiredAllowed = null) {
-        const { ok, reason, action, transition } = accessVm.transition({
-          type: 'toggle_by_index',
-          index,
-          source,
-          actor: actorNpub,
-        });
-
-        if (!ok) {
-          audit(`toggle(${source}) rejected: ${reason} (actor=${actorNpub}, index=${index})`);
-          await publishTransitionLog(transition);
+        if (!isSenderAllowed(actorNpub)) {
+          audit(`toggle(${source}) rejected: sender_not_allowed (actor=${actorNpub}, index=${index})`);
+          await publishTransitionLog({
+            vm: 'direct-policy',
+            streamId,
+            ts: Math.floor(Date.now() / 1000),
+            ok: false,
+            reason: 'sender_not_allowed',
+            actor: actorNpub,
+            index,
+            source,
+          });
           return false;
         }
 
-        const viewer = viewers.get(action.viewerPub);
+        const resolved = resolveViewerByIndex(index);
+        if (!resolved) {
+          audit(`toggle(${source}) rejected: invalid_index (actor=${actorNpub}, index=${index})`);
+          await publishTransitionLog({
+            vm: 'direct-policy',
+            streamId,
+            ts: Math.floor(Date.now() / 1000),
+            ok: false,
+            reason: 'invalid_index',
+            actor: actorNpub,
+            index,
+            source,
+          });
+          return false;
+        }
+
+        const viewer = viewers.get(resolved.pub);
         const decision = thresholdCtl.decide({
           actor: actorNpub,
-          viewerPub: action.viewerPub,
+          viewerPub: resolved.pub,
           currentAllowed: !!viewer?.allowed,
           desiredAllowed,
         });
 
         if (!decision.ok) {
           audit(`toggle(${source}) blocked: ${decision.reason} (actor=${actorNpub}, index=${index})`);
-          await publishTransitionLog({ ...transition, policy: 'threshold', ok: false, reason: decision.reason });
+          await publishTransitionLog({
+            vm: 'direct-policy',
+            streamId,
+            ts: Math.floor(Date.now() / 1000),
+            ok: false,
+            reason: decision.reason,
+            actor: actorNpub,
+            index,
+            source,
+            policy: 'threshold',
+          });
           return false;
         }
 
         if (!decision.apply) {
           audit(`vote(${source}) recorded for #${index}: ${decision.votes}/${decision.threshold}`);
-          await publishTransitionLog({ ...transition, policy: 'threshold', ok: true, applied: false, votes: decision.votes, threshold: decision.threshold, target: decision.allowed });
+          await publishTransitionLog({
+            vm: 'direct-policy',
+            streamId,
+            ts: Math.floor(Date.now() / 1000),
+            ok: true,
+            applied: false,
+            actor: actorNpub,
+            index,
+            source,
+            votes: decision.votes,
+            threshold: decision.threshold,
+            target: decision.allowed,
+            policy: 'threshold',
+          });
           return true;
         }
 
-        const changed = await setViewerAllowed(action.viewerPub, decision.allowed, source);
-        await publishTransitionLog({ ...transition, policy: 'threshold', ok: true, applied: !!changed, mode: decision.mode, target: decision.allowed });
+        const changed = await setViewerAllowed(resolved.pub, decision.allowed, source);
+        await publishTransitionLog({
+          vm: 'direct-policy',
+          streamId,
+          ts: Math.floor(Date.now() / 1000),
+          ok: true,
+          applied: !!changed,
+          actor: actorNpub,
+          index,
+          source,
+          mode: decision.mode,
+          target: decision.allowed,
+          policy: 'threshold',
+        });
         return changed;
       }
 
