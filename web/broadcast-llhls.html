@@ -13,10 +13,20 @@
       video { width: 100%; max-width: 900px; border: 1px solid #2f3540; border-radius: 8px; background: #000; }
       code { background: #1a2233; padding: 2px 4px; border-radius: 4px; }
       a { color: #7ab8ff; }
+          .titlebar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+      .stream-jump { display:flex; align-items:center; gap:8px; }
+      .stream-jump input { width: 140px; padding: 6px 8px; }
+      .stream-jump button { padding: 6px 10px; }
     </style>
   </head>
   <body>
+    <div class="titlebar">
     <h2>Broadcast LL-HLS (test)</h2>
+    <div class="stream-jump">
+      <input id="streamJump" type="text" placeholder="stream id" />
+      <button id="goStream" type="button">Go</button>
+    </div>
+  </div>
     <div class="box">
       <div>Stream: <code id="stream"></code></div>
       <div>Status: <span id="status">idle</span></div>
@@ -38,6 +48,20 @@
       import { BLOB_BASE } from './config.js';
 
       const streamId = (getStreamId() || 'demo1').trim() || 'demo1';
+      const streamJumpEl = document.querySelector('#streamJump');
+      const goStreamEl = document.querySelector('#goStream');
+      if (streamJumpEl && goStreamEl) {
+        streamJumpEl.value = streamId;
+        const go = () => {
+          const next = (streamJumpEl.value || '').trim();
+          if (!next) return;
+          const u = new URL(location.href);
+          u.searchParams.set('stream', next);
+          location.href = u.toString();
+        };
+        goStreamEl.onclick = go;
+        streamJumpEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      }
       const statusEl = document.getElementById('status');
       const mimeEl = document.getElementById('mime');
       const msEl = document.getElementById('ms');

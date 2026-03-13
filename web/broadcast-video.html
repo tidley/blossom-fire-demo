@@ -18,10 +18,20 @@
       button { padding: 6px 10px; cursor: pointer; }
       video, canvas, img { max-width: 100%; border: 1px solid #2f3540; border-radius: 8px; background: #000; }
       .viewer { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px; border-bottom: 1px solid #253043; }
+          .titlebar { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+      .stream-jump { display:flex; align-items:center; gap:8px; }
+      .stream-jump input { width: 140px; padding: 6px 8px; }
+      .stream-jump button { padding: 6px 10px; }
     </style>
   </head>
   <body>
+    <div class="titlebar">
     <h2>Broadcast (near-live video chunks → encrypted)</h2>
+    <div class="stream-jump">
+      <input id="streamJump" type="text" placeholder="stream id" />
+      <button id="goStream" type="button">Go</button>
+    </div>
+  </div>
 
     <div class="box">
       <div>Stream: <code id="stream"></code></div>
@@ -50,6 +60,22 @@
 
       const streamId = (getStreamId() || 'demo1').trim() || 'demo1';
       document.querySelector('#stream').textContent = streamId;
+
+      const streamJumpEl = document.querySelector('#streamJump');
+      const goStreamEl = document.querySelector('#goStream');
+      if (streamJumpEl && goStreamEl) {
+        streamJumpEl.value = streamId;
+        const go = () => {
+          const next = (streamJumpEl.value || '').trim();
+          if (!next) return;
+          const u = new URL(location.href);
+          u.searchParams.set('stream', next);
+          location.href = u.toString();
+        };
+        goStreamEl.onclick = go;
+        streamJumpEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+      }
+
 
       const broadcaster = getOrCreateViewerKeypair('demo.broadcaster.sk');
       document.querySelector('#npub').textContent = broadcaster.npub;
