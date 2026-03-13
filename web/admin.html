@@ -683,7 +683,10 @@
           lastSourceEl.textContent = `${src.slice(0,14)}…${src.slice(-6)}`;
           setStatus(`receiving keys`);
         } catch (e) {
+          const senderRaw = ev?.pubkey ? `${ev.pubkey.slice(0,12)}…${ev.pubkey.slice(-8)}` : 'unknown';
+          const rawEnvelope = String(ev?.content || '').slice(0, 900);
           diagLastUnwrapEl.textContent = `fail: ${e.message || e}`;
+          audit(`dm raw ${senderRaw}: ${rawEnvelope || '<empty>'}`, 'muted');
           audit(`dm unwrap skipped/non-json: ${e.message || e}`, 'muted');
         }
       }
