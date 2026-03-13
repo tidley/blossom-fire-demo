@@ -6,7 +6,7 @@
     "build:web-deps": "node scripts/build-web-deps.mjs"
   },
   "dependencies": {
-    "nostr-tools": "2.10.2"
+    "nostr-tools": "2.18.2"
   },
   "devDependencies": {
     "esbuild": "0.25.10"
