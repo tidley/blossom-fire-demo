@@ -1,11 +1,11 @@
-import * as nostrTools from "./vendor/nostr-tools.bundle.js";
+import * as nostrTools from "https://esm.sh/nostr-tools@2.10.2";
 import {
   SimplePool,
   finalizeEvent,
   generateSecretKey,
   getPublicKey,
   nip19,
-} from "./vendor/nostr-tools.bundle.js";
+} from "https://esm.sh/nostr-tools@2.10.2";
 
 import { RELAYS } from "./config.js";
 
