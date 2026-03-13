@@ -96,7 +96,10 @@
 
         <div id="viewers"></div>
 
-        <div class="small" style="margin-top:8px;"><b>Audit log</b></div>
+        <div class="row" style="justify-content:space-between; align-items:center; margin-top:8px;">
+          <div class="small"><b>Audit log</b></div>
+          <button id="clearAudit" type="button">Clear Audit log</button>
+        </div>
         <div id="audit" class="audit"></div>
       </div>
     </div>
@@ -158,6 +161,7 @@
       const lastSourceEl = document.querySelector('#lastSource');
       const viewersEl = document.querySelector('#viewers');
       const auditEl = document.querySelector('#audit');
+      const clearAuditEl = document.querySelector('#clearAudit');
       const previewEl = document.querySelector('#preview');
       const previewVideoEl = document.querySelector('#previewVideo');
 
@@ -511,6 +515,10 @@
         renderViewers();
         audit('cleared viewer list');
         await maybeRotateOnViewerChange();
+      };
+
+      clearAuditEl.onclick = () => {
+        auditEl.innerHTML = '';
       };
 
       // Subscribe to access requests (public)
