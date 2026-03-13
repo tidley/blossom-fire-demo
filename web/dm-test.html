@@ -82,10 +82,12 @@
       let ws = null;
       let subId = null;
       let stopped = false;
+      let authed = false;
       let sinceNow = Math.floor(Date.now() / 1000);
 
       function start() {
         stopped = false;
+        authed = false;
         if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
 
         sinceNow = Math.floor(Date.now() / 1000);
@@ -106,6 +108,7 @@
               const authUnsigned = { ...nip42.makeAuthEvent(RELAY, msg[1]), pubkey: pub };
               const auth = finalizeEvent(authUnsigned, sk);
               ws.send(JSON.stringify(['AUTH', auth]));
+              authed = true;
               subId = `dm-${Date.now()}-a`;
               setTimeout(() => {
                 try { ws.send(JSON.stringify(['REQ', subId, { kinds:[1059], '#p':[pub], since: sinceNow, limit:200 }])); } catch {}
@@ -135,7 +138,20 @@
           if (msg[0] === 'EOSE') return;
 
           if (msg[0] === 'CLOSED') {
-            statusEl.textContent = `closed: ${msg[2] || ''}`;
+            const reason = String(msg[2] || '');
+            if (reason.includes('auth-required')) {
+              if (authed) {
+                statusEl.textContent = 'auth ok; re-subscribing';
+                subId = `dm-${Date.now()}-r`;
+                setTimeout(() => {
+                  try { ws.send(JSON.stringify(['REQ', subId, { kinds:[1059], '#p':[pub], since: sinceNow, limit:200 }])); } catch {}
+                }, 50);
+              } else {
+                statusEl.textContent = 'awaiting AUTH challenge…';
+              }
+              return;
+            }
+            statusEl.textContent = `closed: ${reason}`;
             return;
           }
         };
