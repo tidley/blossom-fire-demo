@@ -1,11 +1,11 @@
 import * as nostrTools from "https://esm.sh/nostr-tools@2.18.2";
+import { SimplePool } from "https://esm.sh/nostr-tools@2.18.2/pool";
 import {
-  SimplePool,
   finalizeEvent,
   generateSecretKey,
   getPublicKey,
   nip19,
-} from "https://esm.sh/nostr-tools@2.18.2";
+} from "https://esm.sh/nostr-tools@2.18.2/pure";
 
 import { RELAYS } from "./config.js";
 
