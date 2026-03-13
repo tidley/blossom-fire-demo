@@ -38,3 +38,5 @@ export const TAG_ADMINKEY = "blossom-fire-demo-adminkey";
 // Feature flag: when true, route DM wrap/unwrap through Pushstr-aligned adapter.
 // Default false until extraction is fully validated end-to-end.
 export const USE_PUSHSTR_DM = false;
+// Admin-only rollout for Pushstr-style DM unwrap/classification.
+export const USE_PUSHSTR_DM_ADMIN = true;

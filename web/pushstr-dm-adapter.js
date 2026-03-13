@@ -44,10 +44,50 @@ export function wrapDmJsonPushstrCompat({ senderSk, recipientPubkeyHex, payload,
   throw lastErr || new Error('pushstr-compat wrap failed');
 }
 
+function extractFirstJsonObject(raw) {
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  return raw.slice(start, end + 1);
+}
+
+export function parseDmJsonPushstrCompat(rawContent) {
+  const raw = String(rawContent || '').trim();
+  if (!raw) return { msg: null, parseMode: 'empty', raw };
+
+  try {
+    return { msg: JSON.parse(raw), parseMode: 'strict', raw };
+  } catch {}
+
+  const candidate = extractFirstJsonObject(raw);
+  if (candidate) {
+    try {
+      return { msg: JSON.parse(candidate), parseMode: 'extracted_object', raw };
+    } catch {}
+  }
+
+  return { msg: null, parseMode: 'non_json', raw };
+}
+
 export function unwrapDmJsonPushstrCompat({ recipientSk, wrapEv }) {
   if (!giftWrap?.unwrapEvent) throw new Error('nostr-tools gift-wrap API unavailable (nip17/nip59)');
   const inner = giftWrap.unwrapEvent(wrapEv, toPrivkeyInput(recipientSk));
-  let msg = null;
-  try { msg = JSON.parse(inner.content || 'null'); } catch {}
-  return { inner, msg };
+  const parsed = parseDmJsonPushstrCompat(inner?.content || '');
+  return { inner, msg: parsed.msg, parseMode: parsed.parseMode, rawContent: parsed.raw };
+}
+
+export function unwrapDmJsonPushstrCompatAdmin({ recipientSk, wrapEv }) {
+  try {
+    const out = unwrapDmJsonPushstrCompat({ recipientSk, wrapEv });
+    return { ...out, classifier: out.msg ? 'ok' : `drop:${out.parseMode}` };
+  } catch (e) {
+    return {
+      inner: null,
+      msg: null,
+      parseMode: 'unwrap_error',
+      rawContent: '',
+      classifier: 'drop:unwrap_error',
+      error: e,
+    };
+  }
 }

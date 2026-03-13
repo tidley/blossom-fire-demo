@@ -122,7 +122,7 @@
     </div>
 
     <script type="module">
-      import { TAG_REQ, TAG_DEMO, ADMIN_SK_HEX, RELAYS } from './config.js';
+      import { TAG_REQ, TAG_DEMO, ADMIN_SK_HEX, RELAYS, USE_PUSHSTR_DM_ADMIN } from './config.js';
       import { blobFetch } from './blob.js';
       import { aesGcmDecrypt, b64decode, b64encode, utf8Bytes } from './crypto.js';
       import { createThresholdController } from './context-threshold.js';
@@ -138,6 +138,7 @@
         nip17UnwrapJson,
         nip17WrapJson,
       } from './util.js';
+      import { unwrapDmJsonPushstrCompatAdmin } from './pushstr-dm-adapter.js';
 
       const streamId = (getStreamId() || 'demo1').trim() || 'demo1';
       document.querySelector('#stream').textContent = streamId;
@@ -595,13 +596,21 @@
         diagLastEventEl.textContent = ev.id;
         diagLastRelayEl.textContent = relaySource;
         try {
-          const { inner, msg } = nip17UnwrapJson(adminSk, ev);
+          const unwrapped = USE_PUSHSTR_DM_ADMIN
+            ? unwrapDmJsonPushstrCompatAdmin({ recipientSk: adminSk, wrapEv: ev })
+            : nip17UnwrapJson(adminSk, ev);
+
+          if (unwrapped?.error) throw unwrapped.error;
+
+          const { inner, msg } = unwrapped;
           dmStats.unwrapOk += 1;
           renderDmStats();
-          diagLastUnwrapEl.textContent = 'ok';
+          diagLastUnwrapEl.textContent = USE_PUSHSTR_DM_ADMIN
+            ? `ok (${unwrapped.parseMode || 'pushstr'})`
+            : 'ok';
           const senderNpubAll = npubFromPubkey(inner.pubkey);
           const shortSenderAll = `${senderNpubAll.slice(0,14)}…${senderNpubAll.slice(-6)}`;
-          const rawAll = String(inner?.content || '').trim();
+          const rawAll = String(unwrapped?.rawContent ?? inner?.content || '').trim();
 
           // DM control path:
           // - "0" from admin toggles threshold unlock/lock mode
