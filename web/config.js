@@ -5,10 +5,20 @@ const IS_HTTPS = location.protocol === 'https:';
 export const RELAYS = IS_HTTPS
   ? [
       'wss://nip17.tomdwyer.uk',
+      'wss://nip17.com',
+      'wss://relay.primal.net',
+      'wss://nos.lol',
+      'wss://relay.damus.io',
+      'wss://purplepag.es',
     ]
   : [
       `ws://${LAN_HOST}:8080`,
       'wss://nip17.tomdwyer.uk',
+      'wss://nip17.com',
+      'wss://relay.primal.net',
+      'wss://nos.lol',
+      'wss://relay.damus.io',
+      'wss://purplepag.es',
     ];
 
 export const BLOB_BASE = IS_HTTPS
