@@ -89,7 +89,7 @@
       import { TAG_REQ, TAG_DEMO, ADMIN_SK_HEX } from './config.js';
       import { blobFetch } from './blob.js';
       import { aesGcmDecrypt, b64decode, b64encode, utf8Bytes } from './crypto.js';
-      import { createAccessPolicyVM } from './contextvm.js';
+      import { createContextVmRuntime } from './contextvm-sdk.js';
       import {
         getStreamId,
         skFromHex,
@@ -329,7 +329,7 @@
         return controllerNpubs.has(senderNpub);
       }
 
-      const accessVm = createAccessPolicyVM({
+      const accessVm = createContextVmRuntime({
         streamId,
         isSenderAllowed,
         resolveViewerByIndex,
