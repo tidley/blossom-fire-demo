@@ -162,14 +162,6 @@
       const saveControllersEl = document.querySelector('#saveControllers');
       const controlModeEl = document.querySelector('#controlMode');
       const allowedCountEl = document.querySelector('#allowedCount');
-      const adminSk = skFromHex(ADMIN_SK_HEX);
-      const adminPub = pubkeyFromSk(adminSk);
-      const adminNpub = npubFromPubkey(adminPub);
-      document.querySelector('#adminNpub').textContent = `${adminNpub.slice(0,14)}…${adminNpub.slice(-6)}`;
-      adminPubHexEl.textContent = adminPub;
-      diagSubPubEl.textContent = adminPub;
-      adminNpubTextEl.textContent = adminNpub;
-      adminNpubQrEl.src = `https://api.qrserver.com/v1/create-qr-code/?size=700x700&data=${encodeURIComponent(adminNpub)}`;
       const lastFrameEl = document.querySelector('#lastFrame');
       const lastKeyEl = document.querySelector('#lastKey');
       const lastSourceEl = document.querySelector('#lastSource');
@@ -182,6 +174,15 @@
       const diagLastUnwrapEl = document.querySelector('#diagLastUnwrap');
       const previewEl = document.querySelector('#preview');
       const previewVideoEl = document.querySelector('#previewVideo');
+
+      const adminSk = skFromHex(ADMIN_SK_HEX);
+      const adminPub = pubkeyFromSk(adminSk);
+      const adminNpub = npubFromPubkey(adminPub);
+      document.querySelector('#adminNpub').textContent = `${adminNpub.slice(0,14)}…${adminNpub.slice(-6)}`;
+      adminPubHexEl.textContent = adminPub;
+      diagSubPubEl.textContent = adminPub;
+      adminNpubTextEl.textContent = adminNpub;
+      adminNpubQrEl.src = `https://api.qrserver.com/v1/create-qr-code/?size=700x700&data=${encodeURIComponent(adminNpub)}`;
 
       // viewerPubkeyHex -> { allowed, lastSeen, npub }
       const viewers = new Map();
