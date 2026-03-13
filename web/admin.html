@@ -521,6 +521,8 @@
         auditEl.innerHTML = '';
       };
 
+      const dmSince = Math.floor(Date.now() / 1000);
+
       // Subscribe to access requests (public)
       sub([
         {
@@ -667,16 +669,19 @@
 
       // Subscribe to DMs via pool (works on non-auth relays)
       sub([
-        { kinds: [1059], '#p': [adminPub], limit: 500 }
+        { kinds: [1059], '#p': [adminPub], since: dmSince, limit: 500 }
       ], async (ev) => { await processWrappedDm(ev); });
 
       // Additional direct websocket auth subscription for auth-required relays.
       function subscribeDmWithAuth(relayUrl) {
         const ws = new WebSocket(relayUrl);
         let subId = `adm-${Date.now()}`;
-        const sendReq = () => ws.send(JSON.stringify(['REQ', subId, { kinds: [1059], '#p': [adminPub], limit: 500 }]));
+        const sendReq = () => ws.send(JSON.stringify(['REQ', subId, { kinds: [1059], '#p': [adminPub], since: dmSince, limit: 500 }]));
 
-        ws.onopen = () => sendReq();
+        ws.onopen = () => {
+          audit(`dm ws connected: ${relayUrl}`);
+          sendReq();
+        };
         ws.onmessage = async (m) => {
           let msg;
           try { msg = JSON.parse(m.data); } catch { return; }
@@ -687,6 +692,7 @@
               const auth = finalizeEvent(authUnsigned, adminSk);
               ws.send(JSON.stringify(['AUTH', auth]));
               subId = `adm-${Date.now()}-a`;
+              audit(`dm ws auth ok: ${relayUrl}`);
               setTimeout(() => { try { sendReq(); } catch {} }, 50);
             } catch (e) {
               audit(`auth failed ${relayUrl}: ${e.message || e}`);
@@ -710,6 +716,7 @@
         };
 
         ws.onclose = () => {
+          audit(`dm ws closed: ${relayUrl} (reconnecting)`);
           setTimeout(() => subscribeDmWithAuth(relayUrl), 2000);
         };
       }
